@@ -5,11 +5,11 @@ import {
   type CallOverrides,
   type CallRequest,
 } from "../shared/storyteller";
+import { voiceId } from "../shared/voices";
 
 const API = "https://api.elevenlabs.io/v1";
 // Bump this when the tool contract changes so a stale agent is never reused.
 const AGENT_NAME = "Little Wonder storyteller v1";
-const DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb";
 const DEFAULT_LLM = "gemini-2.5-flash";
 
 class SetupError extends Error {}
@@ -18,7 +18,9 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
   if (!env.ELEVENLABS_API_KEY) return null;
   const auth = { "xi-api-key": env.ELEVENLABS_API_KEY };
   const pinned = env.ELEVENLABS_AGENT_ID?.trim();
-  const voiceId = env.ELEVENLABS_VOICE_ID?.trim() || DEFAULT_VOICE;
+  // Only the voice the agent falls back to. Every call overrides it with the
+  // voice the grown-up picked.
+  const agentVoice = env.ELEVENLABS_VOICE_ID?.trim() || voiceId();
 
   async function call<T>(path: string, init?: RequestInit): Promise<T> {
     const response = await fetch(`${API}${path}`, {
@@ -98,7 +100,7 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
               tool_ids: toolIds,
             },
           },
-          tts: { voice_id: voiceId, speed: 0.95, stability: 0.55 },
+          tts: { voice_id: agentVoice, speed: 0.95, stability: 0.55 },
           // Children think mid-sentence. Let the pauses breathe.
           turn: { turn_timeout: 12, turn_eagerness: "patient" },
           conversation: { max_duration_seconds: 900 },
@@ -174,7 +176,7 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
               firstMessage: storytellerGreeting(request),
               language: "en",
             },
-            tts: { voiceId },
+            tts: { voiceId: voiceId(request.profile.voice) },
           }
         : null;
       return { token, overrides };

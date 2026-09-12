@@ -12,6 +12,7 @@ import {
   engagementPlan,
   type StoryPage,
 } from "../shared/story";
+import { STORY_VOICES, voiceId } from "../shared/voices";
 
 const profile = ProfileSchema.parse({});
 
@@ -304,6 +305,10 @@ test("narration validates input and requires a configured provider", async () =>
 
 test("narration returns audio while keeping provider keys and failures private", async () => {
   const original = globalThis.fetch;
+  // The provider reason is logged for the developer, so keep the deliberate
+  // failure below out of the test output.
+  const logError = console.error;
+  console.error = () => {};
   let fail = false;
   globalThis.fetch = async (input, init) => {
     if (String(input).startsWith("https://api.elevenlabs.io/")) {
@@ -366,6 +371,64 @@ test("narration returns audio while keeping provider keys and failures private",
         assert.ok(!(await failed.text()).includes("test-voice-secret"));
       },
     );
+  } finally {
+    globalThis.fetch = original;
+    console.error = logError;
+  }
+});
+
+test("narration uses the picked voice and refuses one that is not offered", async () => {
+  const original = globalThis.fetch;
+  const spoke: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input).startsWith("https://api.elevenlabs.io/")) {
+      spoke.push(new URL(String(input)).pathname.split("/").at(-2)!);
+      return new Response(new Uint8Array([73, 68, 51, 4]), {
+        headers: { "Content-Type": "audio/mpeg" },
+      });
+    }
+    return original(input, init);
+  };
+  try {
+    await withServer(
+      {
+        ELEVENLABS_API_KEY: "test-voice-secret",
+        ELEVENLABS_VOICE_ID: "deployment-default",
+      },
+      async (base) => {
+        for (const voice of STORY_VOICES) {
+          assert.equal(
+            (
+              await post(`${base}/api/narrate`, {
+                text: "A friendly fox.",
+                voice: voice.key,
+              })
+            ).status,
+            200,
+          );
+        }
+        assert.equal(
+          (
+            await post(`${base}/api/narrate`, {
+              text: "A friendly fox.",
+              voice: "a-voice-nobody-offers",
+            })
+          ).status,
+          400,
+          "an unknown voice is refused, never quietly swapped for another",
+        );
+        assert.equal(
+          (await post(`${base}/api/narrate`, { text: "A friendly fox." }))
+            .status,
+          200,
+        );
+      },
+    );
+    assert.deepEqual(spoke, [
+      voiceId("arthur"),
+      voiceId("victoria"),
+      "deployment-default",
+    ]);
   } finally {
     globalThis.fetch = original;
   }

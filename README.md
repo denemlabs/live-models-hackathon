@@ -40,7 +40,7 @@ Optional configuration:
 | ------------------------- | ---------------------------- | ----------------------------------------------------------------- |
 | `OPENAI_STORY_MODEL`      | `gpt-4.1-mini`               | Structured story generation                                       |
 | `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe`     | Voice transcription                                               |
-| `ELEVENLABS_VOICE_ID`     | `JBFqnCBsd6RMkjVDRZzb`       | The storyteller's voice, for both narration and story calls       |
+| `ELEVENLABS_VOICE_ID`     | Arthur                       | Fallback voice for narration that names none; the picked voice wins |
 | `ELEVENLABS_MODEL`        | `eleven_flash_v2_5`          | Narration model                                                   |
 | `ELEVENLABS_AGENT_ID`     | provisioned on first call    | Pin an existing storyteller agent instead of creating one         |
 | `ELEVENLABS_LLM`          | `gemini-2.5-flash`           | Model driving the live storyteller                                |
@@ -48,7 +48,7 @@ Optional configuration:
 | `PORT`                    | `3000`                       | Local server port                                                 |
 | `APP_ACCESS_CODE`         | unset                        | Shared code required by API endpoints; enter in Grown-up settings |
 
-Open **Grown-up settings** to allow live processing and select age, simpler language, larger text, reduced motion, and narration. Without a Reactor key, GPT stories and voice still work with illustrated previews. An API failure is shown explicitly; live requests do not silently fall back to demo output.
+Open **Grown-up settings** to allow live processing and select age, storyteller voice, simpler language, larger text, reduced motion, and narration. Two voices are offered, Arthur and Victoria, and the chosen one reads the storybook pages and speaks on a story call, so a child hears one narrator throughout. Without a Reactor key, GPT stories and voice still work with illustrated previews. An API failure is shown explicitly; live requests do not silently fall back to demo output.
 
 ## How it works
 

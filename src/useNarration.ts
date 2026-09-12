@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Voice } from "../shared/voices";
 
 type Options = {
   elevenlabs: boolean;
   enabled: boolean;
   accessCode: string;
+  voice: Voice;
   youngReader: boolean;
   onError: (message: string) => void;
 };
@@ -41,7 +43,7 @@ export function useNarration(options: Options) {
 
   useEffect(() => {
     mute();
-  }, [options.enabled, options.elevenlabs, mute]);
+  }, [options.enabled, options.elevenlabs, options.voice, mute]);
   useEffect(
     () => () => {
       generation.current++;
@@ -94,7 +96,7 @@ export function useNarration(options: Options) {
             ? { "x-access-code": latest.current.accessCode }
             : {}),
         },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, voice: latest.current.voice }),
         signal: AbortSignal.any([
           controller.signal,
           AbortSignal.timeout(35000),

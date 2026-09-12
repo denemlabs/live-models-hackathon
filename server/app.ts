@@ -15,6 +15,7 @@ import {
   storyInstructions,
 } from "../shared/story";
 import { CallRequestSchema } from "../shared/storyteller";
+import { VoiceSchema, voiceId } from "../shared/voices";
 import { createStoryteller } from "./storyteller";
 
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
@@ -77,7 +78,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
   app.use(express.json({ limit: "64kb" }));
   app.post("/api/narrate", async (req, res) => {
     const parsed = z
-      .object({ text: z.string().trim().min(1).max(2000) })
+      .object({
+        text: z.string().trim().min(1).max(2000),
+        voice: VoiceSchema.optional(),
+      })
       .safeParse(req.body);
     if (!parsed.success) {
       res
@@ -95,7 +99,11 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
     const disconnected = () => controller.abort();
     res.on("close", disconnected);
     try {
-      const voice = env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb";
+      // A named voice is a deliberate choice, so it wins over the deployment
+      // default that only covers callers who did not pick one.
+      const voice = parsed.data.voice
+        ? voiceId(parsed.data.voice)
+        : env.ELEVENLABS_VOICE_ID || voiceId();
       const response = await fetch(
         `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}/stream?output_format=mp3_44100_128`,
         {
@@ -120,16 +128,25 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         !response.ok ||
         !response.headers.get("content-type")?.startsWith("audio/")
       )
-        throw new Error("Narration unavailable");
+        throw new Error(
+          `${response.status} ${await response.text().catch(() => "")}`.slice(
+            0,
+            300,
+          ),
+        );
       // Short pages are buffered in memory for consistent browser playback.
       const audio = Buffer.from(await response.arrayBuffer());
       if (!audio.length) throw new Error("Empty narration");
       if (!controller.signal.aborted) res.type("audio/mpeg").send(audio);
-    } catch {
-      if (!controller.signal.aborted)
+    } catch (error) {
+      // A voice the workspace cannot reach is a setup problem the developer
+      // has to see; the child is still only told the friendly version.
+      if (!controller.signal.aborted) {
+        console.error("Narration failed:", error);
         res.status(502).json({
           error: "Narration couldn’t connect. You can use the browser voice.",
         });
+      }
     } finally {
       res.off("close", disconnected);
     }

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { DEFAULT_VOICE, VoiceSchema } from "./voices";
 
 export const ProfileSchema = z.object({
   age: z.enum(["3–5", "6–8", "9–12"]).default("6–8"),
@@ -6,6 +7,7 @@ export const ProfileSchema = z.object({
   reducedMotion: z.boolean().default(false),
   largeText: z.boolean().default(false),
   readAloud: z.boolean().default(true),
+  voice: VoiceSchema.default(DEFAULT_VOICE),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
 export const ResponseKindSchema = z.enum([

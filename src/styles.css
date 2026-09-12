@@ -996,6 +996,38 @@ dialog::backdrop {
   border-color: #8eaa77;
   color: #49643d;
 }
+.voice-picker {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 4px;
+}
+.voice-picker button {
+  flex: 1;
+  border: 1px solid #dedfcc;
+  border-radius: 8px;
+  background: #f7f6eb;
+  padding: 10px 8px;
+  text-align: left;
+}
+.voice-picker button strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+}
+.voice-picker button span {
+  display: block;
+  font-size: 10px;
+  margin-top: 3px;
+  color: #8a917b;
+}
+.voice-picker button.selected {
+  background: #e6ebd9;
+  border-color: #8eaa77;
+  color: #49643d;
+}
+.voice-picker button.selected span {
+  color: #5d7b4e;
+}
 .preferences {
   margin: 20px 0;
 }

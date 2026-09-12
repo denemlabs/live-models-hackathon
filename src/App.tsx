@@ -31,6 +31,7 @@ import {
   type Interaction,
 } from "../shared/story";
 import type { SceneArgs } from "../shared/storyteller";
+import { STORY_VOICES } from "../shared/voices";
 import Illustration from "./Illustration";
 import { api } from "./api";
 import { useOrbis } from "./useOrbis";
@@ -112,6 +113,7 @@ export default function App() {
     elevenlabs: !!config?.elevenlabs && consent && !demo,
     enabled: profile.readAloud,
     accessCode,
+    voice: profile.voice,
     youngReader: profile.age === "3–5",
     onError: setError,
   });
@@ -1123,6 +1125,29 @@ export default function App() {
                   >
                     {age}
                     <span>years</span>
+                  </button>
+                ))}
+              </div>
+              <label className="field-label" htmlFor="voice">
+                Storyteller’s voice
+              </label>
+              <div
+                className="voice-picker"
+                id="voice"
+                role="group"
+                aria-label="Storyteller’s voice"
+              >
+                {STORY_VOICES.map((voice) => (
+                  <button
+                    className={profile.voice === voice.key ? "selected" : ""}
+                    aria-pressed={profile.voice === voice.key}
+                    key={voice.key}
+                    onClick={() =>
+                      setProfile((p) => ({ ...p, voice: voice.key }))
+                    }
+                  >
+                    <strong>{voice.label}</strong>
+                    <span>{voice.detail}</span>
                   </button>
                 ))}
               </div>
