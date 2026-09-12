@@ -38,6 +38,9 @@ export const storytellerTools = [
     description:
       "Change the living picture the child is watching. Call this the moment a new place, character, or time of day enters the story, before you describe it out loud. Never mention this tool to the child.",
     expects_response: false,
+    // Runs in the background so the picture changes mid-sentence without
+    // splitting the speaking turn, which makes the agent repeat itself.
+    execution_mode: "async",
     parameters: {
       type: "object",
       properties: {
@@ -62,6 +65,9 @@ export const storytellerTools = [
     description:
       "Write the page the child has just heard into their storybook. Call this immediately after you finish a story beat and ask your question, every single time. Never mention this tool to the child.",
     expects_response: false,
+    // Deferring until the beat has been spoken stops the agent re-narrating
+    // it, and guarantees the transcript has landed before the page is written.
+    execution_mode: "post_tool_speech",
     parameters: {
       type: "object",
       properties: {

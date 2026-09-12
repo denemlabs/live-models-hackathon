@@ -47,7 +47,15 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
       (t) =>
         t.tool_config.name === tool.name && t.tool_config.type === "client",
     );
-    if (existing) return existing.id;
+    // Agents reference tools by id, so a tool created by an older build keeps
+    // its old behaviour forever unless it is brought back in step here.
+    if (existing) {
+      await call(`/convai/tools/${encodeURIComponent(existing.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ tool_config: tool }),
+      });
+      return existing.id;
+    }
     const created = await call<{ id?: string; tool_id?: string }>(
       "/convai/tools",
       { method: "POST", body: JSON.stringify({ tool_config: tool }) },
@@ -57,14 +65,22 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
     return id;
   }
 
+  async function syncTools() {
+    const ids = [];
+    for (const tool of storytellerTools) ids.push(await toolId(tool));
+    return ids;
+  }
+
   async function provision() {
     const found = await call<{ agents: { agent_id: string; name: string }[] }>(
       `/convai/agents?search=${encodeURIComponent(AGENT_NAME)}&page_size=100`,
     );
     const existing = found.agents.find((a) => a.name === AGENT_NAME);
-    if (existing) return existing.agent_id;
-    const toolIds = [];
-    for (const tool of storytellerTools) toolIds.push(await toolId(tool));
+    if (existing) {
+      await syncTools();
+      return existing.agent_id;
+    }
+    const toolIds = await syncTools();
     const created = await call<{ agent_id: string }>("/convai/agents/create", {
       method: "POST",
       body: JSON.stringify({
@@ -111,18 +127,22 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
   // An agent only accepts a per-call prompt if its owner enabled that field.
   // Ask, rather than assuming, so pinning an agent we provisioned ourselves
   // does not silently drop the storyteller back to its placeholder prompt.
-  async function overridable(id: string) {
+  async function inspect(id: string) {
     const agent = await call<{
+      name?: string;
       platform_settings?: {
         overrides?: {
           conversation_config_override?: { agent?: { prompt?: unknown } };
         };
       };
     }>(`/convai/agents/${encodeURIComponent(id)}`);
-    const fields =
-      agent.platform_settings?.overrides?.conversation_config_override?.agent
-        ?.prompt;
-    return (fields as { prompt?: boolean } | undefined)?.prompt === true;
+    const fields = agent.platform_settings?.overrides
+      ?.conversation_config_override?.agent?.prompt as
+      { prompt?: boolean } | undefined;
+    // Only an agent of ours gets its tools rewritten; someone else's agent is
+    // left exactly as its owner configured it.
+    if (agent.name === AGENT_NAME) await syncTools();
+    return { id, overridable: fields?.prompt === true };
   }
 
   let agent: Promise<{ id: string; overridable: boolean }> | null = null;
@@ -130,10 +150,11 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
     // Cache the in-flight promise so concurrent calls never provision twice,
     // but drop it on failure so a transient error is retried.
     if (!agent)
-      agent = (async () => {
-        if (!pinned) return { id: await provision(), overridable: true };
-        return { id: pinned, overridable: await overridable(pinned) };
-      })().catch((error: unknown) => {
+      agent = (
+        pinned
+          ? inspect(pinned)
+          : provision().then((id) => ({ id, overridable: true }))
+      ).catch((error: unknown) => {
         agent = null;
         throw error;
       });

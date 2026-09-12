@@ -16,6 +16,7 @@ import {
 
 const profile = ProfileSchema.parse({});
 const KEY = "test-elevenlabs-secret";
+const AGENT_NAME = "Little Wonder storyteller v1";
 
 async function withServer(
   env: NodeJS.ProcessEnv,
@@ -43,7 +44,12 @@ type Recorded = { url: string; method: string; body: any; key?: string };
 // agent. `pinnedAllowsOverrides` models whether a pinned agent's owner enabled
 // the prompt override field.
 function mockElevenLabs(
-  options: { existingAgent?: string; pinnedAllowsOverrides?: boolean } = {},
+  options: {
+    existingAgent?: string;
+    pinnedAllowsOverrides?: boolean;
+    pinnedName?: string;
+    existingTools?: boolean;
+  } = {},
 ) {
   const original = globalThis.fetch;
   const log = console.log;
@@ -52,7 +58,7 @@ function mockElevenLabs(
     ? [
         {
           agent_id: options.existingAgent,
-          name: "Little Wonder storyteller v1",
+          name: AGENT_NAME,
         },
       ]
     : [];
@@ -69,11 +75,20 @@ function mockElevenLabs(
     });
     const json = (data: unknown) =>
       new Response(JSON.stringify(data), { status: 200 });
-    if (url.includes("/convai/tools?")) return json({ tools: [] });
+    if (url.includes("/convai/tools?")) {
+      const name = new URL(url).searchParams.get("search");
+      return json({
+        tools: options.existingTools
+          ? [{ id: `tool_${name}`, tool_config: { name, type: "client" } }]
+          : [],
+      });
+    }
+    if (/\/convai\/tools\/[^/?]+$/.test(url)) return json({ id: "tool_test" });
     if (url.endsWith("/convai/tools")) return json({ id: "tool_test" });
     if (url.includes("/convai/agents?")) return json({ agents });
     if (/\/convai\/agents\/[^/?]+$/.test(url))
       return json({
+        name: options.pinnedName,
         platform_settings: {
           overrides: {
             conversation_config_override: {
@@ -83,9 +98,7 @@ function mockElevenLabs(
         },
       });
     if (url.endsWith("/convai/agents/create")) {
-      agents = [
-        { agent_id: "agent_new", name: "Little Wonder storyteller v1" },
-      ];
+      agents = [{ agent_id: "agent_new", name: AGENT_NAME }];
       return json({ agent_id: "agent_new" });
     }
     if (url.includes("/convai/conversation/token"))
@@ -265,6 +278,45 @@ test("story calls need a key and a valid profile", async () => {
     });
   } finally {
     eleven.restore();
+  }
+});
+
+// Agents hold tool ids, so a tool written by an older build keeps its old
+// behaviour until something rewrites it. Pinning must not freeze that.
+test("tools belonging to our agent are rewritten, and other people's are not", async () => {
+  for (const name of [AGENT_NAME, "Someone else's agent"]) {
+    const eleven = mockElevenLabs({
+      pinnedName: name,
+      pinnedAllowsOverrides: true,
+      existingTools: true,
+    });
+    try {
+      await withServer(
+        { ELEVENLABS_API_KEY: KEY, ELEVENLABS_AGENT_ID: "agent_pinned" },
+        async (base) => {
+          assert.equal(
+            (await post(`${base}/api/storyteller/token`, { profile })).status,
+            200,
+          );
+        },
+      );
+      const patched = eleven.calls.filter((c) => c.method === "PATCH");
+      if (name === AGENT_NAME) {
+        assert.deepEqual(
+          patched.map((c) => c.body.tool_config.name),
+          [SHOW_SCENE_TOOL, TURN_PAGE_TOOL],
+        );
+        assert.equal(
+          patched[1].body.tool_config.execution_mode,
+          "post_tool_speech",
+          "turn_page must wait for the beat to be spoken",
+        );
+      } else {
+        assert.deepEqual(patched, [], "never rewrite another owner's tools");
+      }
+    } finally {
+      eleven.restore();
+    }
   }
 });
 
