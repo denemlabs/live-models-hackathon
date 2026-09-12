@@ -49,7 +49,7 @@ Open **Grown-up settings** to allow live processing and select age, simpler lang
 1. Tap the microphone, say an idea, and tap again to send it (maximum 30 seconds). Typing is always available. This prototype uses turn-by-turn recording, not an always-on microphone.
 2. `/api/transcribe` handles an in-memory audio upload and asks OpenAI for the transcript.
 3. `/api/story` validates and moderates input, asks the Responses API for a structured page, and moderates that output before returning it. Requests use `store: false`.
-4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks the acknowledgment, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
+4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks direct replies or matching model events, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
 5. In live mode with grown-up consent, `/api/narrate` sends only the narrated page text to ElevenLabs. Short MP3s are buffered in memory before playback; stopping, changing pages, or recording cancels narration. Demo mode and provider failures use browser speech synthesis.
 6. The child can ask a question, choose a direction, request a gentler scene, or ask for a cozy ending. Previous pages remain available in memory. Narration, recording, and video can be paused; a new story releases the video session.
 
@@ -74,7 +74,7 @@ npm run build
 npm start
 ```
 
-Tests exercise demo continuity and calming reactions, invalid input, missing keys, origin/access-code checks, audio validation, age/accessibility prompting, and Reactor token scoping. Browser checks cover creating and steering a story, pause/resume, history, parent settings, and desktop/mobile layouts. OpenAI story generation and transcription have been verified against the deployment. Orbis token creation works, but the live video connection still needs investigation.
+Tests exercise demo continuity and calming reactions, invalid input, missing keys, origin/access-code checks, audio validation, age/accessibility prompting, and Reactor token scoping. Browser checks cover creating and steering a story, pause/resume, history, parent settings, and desktop/mobile layouts. OpenAI story generation and transcription have been verified against the deployment. Orbis video has also been verified locally at 2560×1440 with advancing playback, prompt updates, and pause/resume.
 
 ## API references
 
@@ -85,9 +85,9 @@ Tests exercise demo continuity and calming reactions, invalid input, missing key
 
 ## Organizer starter compatibility
 
-The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-starter) is the reference for our Orbis session lifecycle. Both projects use Reactor SDK 3.0.2 and `reactor/visko-orbis-stable`, with server-side, model-scoped, single-session token minting.
+The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-starter) is the reference for our Orbis session lifecycle. Both projects use Reactor SDK 3.0.2 and `reactor/visko-orbis-stable`, with server-side, model-scoped, single-session token minting. The handshake declares both `main_video` and `main_audio`: Orbis requires the full track list even when audio generation is disabled.
 
-Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Regression tests cover early/late readiness, rejected commands, timeout, and cancellation.
+Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Some commands return an empty acknowledgment and broadcast their confirmation separately. We subscribe before sending, accept either a direct matching reply or a matching event, and require confirmation before reporting success. Regression tests cover the track contract, early/late events, empty acknowledgments, rejected commands, timeout, and cancellation.
 
 The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from ElevenLabs or the browser.
 

@@ -1,3 +1,9 @@
+// The session handshake must declare every Orbis track, even with audio disabled.
+export const ORBIS_TRACKS = [
+  { name: "main_video", kind: "video", direction: "recvonly" },
+  { name: "main_audio", kind: "audio", direction: "recvonly" },
+] as const;
+
 // Protocol behavior verified against Visko-Platform/orbis-hackathon-starter.
 // Kept independent of React so event ordering and cancellation can be tested.
 export type ModelMessage = { type?: string; [key: string]: unknown };
@@ -23,13 +29,42 @@ export async function checkedCommand(
   command: string,
   data: Record<string, unknown>,
   expected: string,
+  signal?: AbortSignal,
+  timeoutMs = 30000,
 ) {
-  const response = modelMessage(await transport.sendCommand(command, data));
-  if (response.type !== expected) {
-    // Never expose raw provider replies or prompts to the child-facing UI.
-    throw new Error(`Orbis did not acknowledge ${command}.`);
+  signal?.throwIfAborted();
+  let finish!: (message: ModelMessage | null) => void;
+  const confirmed = new Promise<ModelMessage | null>((resolve) => {
+    finish = resolve;
+  });
+  // Orbis can acknowledge a command without a payload, then broadcast its
+  // resulting state. Subscribe first so an event preceding the ack is retained.
+  const unsubscribe = transport.onMessage((raw) => {
+    const message = modelMessage(raw);
+    if (message.type === expected) finish(message);
+    if (
+      message.type === "command_error" &&
+      (!message.command || message.command === command)
+    )
+      finish(null);
+  });
+  const timer = setTimeout(() => finish(null), timeoutMs);
+  const cancel = () => finish(null);
+  signal?.addEventListener("abort", cancel, { once: true });
+  try {
+    const raw = await transport.sendCommand(command, data);
+    signal?.throwIfAborted();
+    const response = raw == null ? await confirmed : modelMessage(raw);
+    signal?.throwIfAborted();
+    if (response?.type !== expected) {
+      throw new Error(`Orbis did not acknowledge ${command}.`);
+    }
+    return response;
+  } finally {
+    clearTimeout(timer);
+    unsubscribe();
+    signal?.removeEventListener("abort", cancel);
   }
-  return response;
 }
 
 export async function startOrbisRun(
@@ -44,6 +79,7 @@ export async function startOrbisRun(
     "set_audio_enabled",
     { audio_enabled: false },
     "audio_enabled_accepted",
+    signal,
   );
   signal.throwIfAborted();
   let finish!: (value: boolean) => void;
@@ -65,11 +101,12 @@ export async function startOrbisRun(
       "set_prompt",
       { prompt },
       "prompt_accepted",
+      signal,
     );
     const isReady = await ready;
     signal.throwIfAborted();
     if (!isReady) throw new Error("Orbis did not report ready conditions.");
-    await checkedCommand(transport, "start", {}, "generation_started");
+    await checkedCommand(transport, "start", {}, "generation_started", signal);
     signal.throwIfAborted();
   } finally {
     clearTimeout(timer);

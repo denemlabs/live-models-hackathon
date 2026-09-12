@@ -3,6 +3,7 @@ import type { Reactor } from "@reactor-team/js-sdk";
 import { api } from "./api";
 import {
   checkedCommand,
+  ORBIS_TRACKS,
   modelMessage,
   startOrbisRun,
   type OrbisTransport,
@@ -44,13 +45,27 @@ export function useOrbis(accessCode: string) {
     setError("");
     void old?.disconnect().catch(() => {});
   }, []);
-  const fail = useCallback(() => {
-    stop();
-    setError(
-      "Live pictures couldn’t connect. You can keep reading or reconnect.",
-    );
-    setStatus("Pictures disconnected");
-  }, [stop]);
+  const fail = useCallback(
+    (cause?: unknown) => {
+      // Retain a diagnostic code without logging prompts, tokens, or provider bodies.
+      const code =
+        cause && typeof cause === "object"
+          ? (cause as { code?: unknown }).code
+          : undefined;
+      console.warn(
+        "Orbis connection failed",
+        typeof code === "string" && /^[A-Z_]{1,50}$/.test(code)
+          ? code
+          : "SESSION_ERROR",
+      );
+      stop();
+      setError(
+        "Live pictures couldn’t connect. You can keep reading or reconnect.",
+      );
+      setStatus("Pictures disconnected");
+    },
+    [stop],
+  );
 
   const steer = useCallback(
     async (prompt: string) => {
@@ -73,11 +88,12 @@ export function useOrbis(accessCode: string) {
                 "set_prompt",
                 { prompt },
                 "prompt_accepted",
+                signal,
               );
             }
           })
-          .catch(() => {
-            if (currentSession()) fail();
+          .catch((cause) => {
+            if (currentSession()) fail(cause);
           });
         await commandQueue.current;
         return;
@@ -100,23 +116,21 @@ export function useOrbis(accessCode: string) {
           apiUrl: "https://api.reactor.inc",
           logLevel: "off",
           readyTimeoutMs: 240000,
-          modelTracks: [
-            { name: "main_video", kind: "video", direction: "recvonly" },
-          ],
+          modelTracks: [...ORBIS_TRACKS],
         });
         client.current = reactor;
         reactor.on("trackReceived", (name, _track, media) => {
           if (currentSession() && name === "main_video") setStream(media);
         });
-        reactor.on("error", () => {
-          if (currentSession()) fail();
+        reactor.on("error", (cause) => {
+          if (currentSession()) fail(cause);
         });
         reactor.on("message", (raw) => {
           if (!currentSession()) return;
           const message = modelMessage(raw);
           switch (message.type) {
             case "command_error":
-              fail();
+              fail({ code: "MODEL_COMMAND_REJECTED" });
               break;
             case "generation_started":
               started.current = true;
@@ -166,10 +180,11 @@ export function useOrbis(accessCode: string) {
             "set_prompt",
             { prompt: applied },
             "prompt_accepted",
+            signal,
           );
         }
-      } catch {
-        if (currentSession()) fail();
+      } catch (cause) {
+        if (currentSession()) fail(cause);
       } finally {
         if (currentSession()) connecting.current = false;
       }
@@ -188,9 +203,10 @@ export function useOrbis(accessCode: string) {
           paused ? "pause" : "resume",
           {},
           paused ? "generation_paused" : "generation_resumed",
+          controller.current.signal,
         );
-      } catch {
-        if (epoch.current === generation) fail();
+      } catch (cause) {
+        if (epoch.current === generation) fail(cause);
       }
     },
     [fail],
