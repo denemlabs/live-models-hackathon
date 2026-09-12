@@ -138,8 +138,8 @@ export function useOrbis(accessCode: string) {
       setPromptStatus(
         visualChange
           ? connecting.current
-            ? "Your choice is queued while the live pictures connect…"
-            : "Sending your choice to Orbis…"
+            ? "Your picture is queued while the video connects…"
+            : "Sending your picture request…"
           : "",
       );
       if (connecting.current) return pictures.current.wait();
@@ -149,7 +149,7 @@ export function useOrbis(accessCode: string) {
       const acknowledged = (applied: typeof scene) => {
         if (currentSession() && pending.current === applied && applied.change)
           setPromptStatus(
-            "Orbis accepted your choice. The picture may take a moment to change.",
+            "Picture request delivered. If it still looks wrong, try Regenerate picture.",
           );
       };
       if (client.current && !prompt) return;

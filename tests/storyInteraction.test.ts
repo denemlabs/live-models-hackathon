@@ -60,8 +60,10 @@ test("narration reads the whole visible story, question and both numbered option
   const text = pageNarration(page);
   assert.ok(text.startsWith(page.narrative));
   assert.ok(text.includes(page.question));
-  assert.ok(text.includes(`Option one: ${page.choices[0]}.`));
-  assert.ok(text.includes(`Option two: ${page.choices[1]}.`));
+  assert.ok(text.includes(page.choices[0]));
+  assert.ok(text.includes(page.choices[1]));
+  assert.ok(text.includes("… or "));
+  assert.doesNotMatch(text, /\boption(?:s)?\b/i);
   assert.ok(!pageNarration({ ...page, choices: [] }).includes("Option one"));
   assert.equal(
     pageNarration({ ...page, responseKind: "answer" }),

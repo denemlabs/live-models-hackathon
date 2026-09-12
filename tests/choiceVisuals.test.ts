@@ -54,6 +54,7 @@ test("new model output requires complete prepared plans, or no plans for an open
     ...first,
     responseKind: "story",
     visualChange: "",
+    visualUpdate: "continue",
     acknowledgment: "Let's begin.",
   };
   assert.equal(GeneratedPageSchema.safeParse(complete).success, true);

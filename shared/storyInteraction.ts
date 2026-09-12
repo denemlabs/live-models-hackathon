@@ -51,16 +51,9 @@ export function pageNarration(page: StoryPage) {
   if (page.responseKind === "answer" || page.responseKind === "simplify")
     return page.narrative;
   const parts = [page.narrative, page.question];
-  page.choices
+  const choices = page.choices
     .slice(0, 2)
-    .forEach((choice, index) =>
-      parts.push(
-        `Option ${index === 0 ? "one" : "two"}: ${choice.replace(/[.!?]+$/, "")}.`,
-      ),
-    );
-  if (page.choices.length === 2)
-    parts.push(
-      "Say one or two, choose on the screen, or tell me your own idea.",
-    );
+    .map((choice) => choice.replace(/[.!?]+$/, ""));
+  if (choices.length === 2) parts.push(`${choices[0]}… or ${choices[1]}?`);
   return parts.join(" ");
 }

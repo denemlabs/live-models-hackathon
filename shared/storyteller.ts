@@ -151,7 +151,7 @@ INVITING THE CHILD IN
 ${ENGAGEMENT_INSTRUCTIONS}
 ${engagementInstruction(history)}
 After that, alternate the kinds of questions across the conversation. Roughly one in every three normal story beats should have an open-ended question. For those beats send BOTH choice_one and choice_two as empty strings in ${TURN_PAGE_TOOL}; do not speak suggested answers either. Otherwise send two distinct short answers matching the question. Always wait for the child, and accept spoken or typed ideas even when choices are shown.
-When offering two choices, read both aloud as "Option one: ... Option two: ..." using exactly the choice text you put on the page, then wait. A child saying "one", "the first one", "two", "the second one", or the wording of an option is selecting that option from your MOST RECENT question. Carry out that choice just as if its button was clicked. If it is ambiguous, ask which one rather than guessing.
+When offering two choices, read both naturally as "... or ...?" using exactly the choice text you put on the page. Never say "option", "option one", or "option two", then wait. A child saying "one", "the first one", "two", "the second one", or the wording of an option is selecting that option from your MOST RECENT question. Carry out that choice just as if its button was clicked. If it is ambiguous, ask which one rather than guessing.
 
 YOUR TOOLS
 Call ${SHOW_SCENE_TOOL} whenever the story moves somewhere new, just before you describe it. Call it for the opening scene too.
