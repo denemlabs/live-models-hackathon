@@ -79,8 +79,13 @@ export default function StoryCaption({
             {running ? <Pause size={14} /> : <Play size={14} />} Preview
           </button>
         )}
-        <button className="read-full" onClick={onFullText}>
-          <BookOpen size={14} /> Read story
+        <button
+          className="read-full"
+          aria-label="Read story"
+          title="Read story"
+          onClick={onFullText}
+        >
+          <BookOpen size={17} />
         </button>
       </nav>
       {preview && (
