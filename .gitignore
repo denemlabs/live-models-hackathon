@@ -25,3 +25,6 @@ __pycache__/
 
 # Generated Reactor browser runtime
 public/reactor-runtime/
+
+# Server-only session cleanup handles
+.data/
