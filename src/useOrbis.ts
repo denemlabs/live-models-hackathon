@@ -3,6 +3,8 @@ import type { Reactor } from "@reactor-team/js-sdk";
 import { api } from "./api";
 import {
   checkedCommand,
+  ORBIS_TRACKS,
+  orbisFailure,
   modelMessage,
   startOrbisRun,
   type OrbisTransport,
@@ -21,7 +23,7 @@ function transportFor(reactor: Reactor): OrbisTransport {
 export function useOrbis(accessCode: string) {
   const client = useRef<Reactor | null>(null);
   const epoch = useRef(0);
-  const pending = useRef("");
+  const pending = useRef({ full: "", change: "" });
   const connecting = useRef(false);
   const started = useRef(false);
   const controller = useRef(new AbortController());
@@ -35,7 +37,7 @@ export function useOrbis(accessCode: string) {
     controller.current = new AbortController();
     connecting.current = false;
     started.current = false;
-    pending.current = "";
+    pending.current = { full: "", change: "" };
     commandQueue.current = Promise.resolve();
     const old = client.current;
     client.current = null;
@@ -44,17 +46,21 @@ export function useOrbis(accessCode: string) {
     setError("");
     void old?.disconnect().catch(() => {});
   }, []);
-  const fail = useCallback(() => {
-    stop();
-    setError(
-      "Live pictures couldn’t connect. You can keep reading or reconnect.",
-    );
-    setStatus("Pictures disconnected");
-  }, [stop]);
+  const fail = useCallback(
+    (cause?: unknown) => {
+      const failure = orbisFailure(cause);
+      // Never log prompts, tokens, or raw provider bodies.
+      console.warn("Orbis connection failed", failure.code);
+      stop();
+      setError(failure.message);
+      setStatus(failure.status);
+    },
+    [stop],
+  );
 
   const steer = useCallback(
-    async (prompt: string) => {
-      pending.current = prompt;
+    async (prompt: string, visualChange = "") => {
+      pending.current = { full: prompt, change: visualChange };
       if (connecting.current) return;
       const generation = epoch.current;
       const currentSession = () => epoch.current === generation;
@@ -71,13 +77,14 @@ export function useOrbis(accessCode: string) {
               await checkedCommand(
                 transportFor(current),
                 "set_prompt",
-                { prompt },
+                { prompt: visualChange.trim() || prompt },
                 "prompt_accepted",
+                signal,
               );
             }
           })
-          .catch(() => {
-            if (currentSession()) fail();
+          .catch((cause) => {
+            if (currentSession()) fail(cause);
           });
         await commandQueue.current;
         return;
@@ -100,23 +107,21 @@ export function useOrbis(accessCode: string) {
           apiUrl: "https://api.reactor.inc",
           logLevel: "off",
           readyTimeoutMs: 240000,
-          modelTracks: [
-            { name: "main_video", kind: "video", direction: "recvonly" },
-          ],
+          modelTracks: [...ORBIS_TRACKS],
         });
         client.current = reactor;
         reactor.on("trackReceived", (name, _track, media) => {
           if (currentSession() && name === "main_video") setStream(media);
         });
-        reactor.on("error", () => {
-          if (currentSession()) fail();
+        reactor.on("error", (cause) => {
+          if (currentSession()) fail(cause);
         });
         reactor.on("message", (raw) => {
           if (!currentSession()) return;
           const message = modelMessage(raw);
           switch (message.type) {
             case "command_error":
-              fail();
+              fail({ code: "MODEL_COMMAND_REJECTED" });
               break;
             case "generation_started":
               started.current = true;
@@ -153,23 +158,25 @@ export function useOrbis(accessCode: string) {
         if (!currentSession()) return;
         const initialPrompt = pending.current;
         setStatus("Waiting for the first living picture…");
-        await startOrbisRun(transportFor(reactor), initialPrompt, signal);
+        await startOrbisRun(transportFor(reactor), initialPrompt.full, signal);
         if (!currentSession()) return;
         started.current = true;
         // A second story page can arrive while the initial prompt is being prepared.
-        // Drain changes before releasing the connection lock so none are dropped.
+        // Startup can coalesce several turns, so use the latest complete scene here.
+        // Once connected, ordinary updates use only the visible transition.
         let applied = initialPrompt;
         while (currentSession() && pending.current !== applied) {
           applied = pending.current;
           await checkedCommand(
             transportFor(reactor),
             "set_prompt",
-            { prompt: applied },
+            { prompt: applied.full },
             "prompt_accepted",
+            signal,
           );
         }
-      } catch {
-        if (currentSession()) fail();
+      } catch (cause) {
+        if (currentSession()) fail(cause);
       } finally {
         if (currentSession()) connecting.current = false;
       }
@@ -188,9 +195,10 @@ export function useOrbis(accessCode: string) {
           paused ? "pause" : "resume",
           {},
           paused ? "generation_paused" : "generation_resumed",
+          controller.current.signal,
         );
-      } catch {
-        if (epoch.current === generation) fail();
+      } catch (cause) {
+        if (epoch.current === generation) fail(cause);
       }
     },
     [fail],

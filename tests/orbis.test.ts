@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   checkedCommand,
+  ORBIS_TRACKS,
+  orbisFailure,
   modelMessage,
   startOrbisRun,
   type OrbisTransport,
@@ -87,6 +89,8 @@ test("a rejected command reply cannot start a generation and cleans up the liste
       "pause",
       {},
       "generation_paused",
+      undefined,
+      5,
     ),
   );
 });
@@ -118,4 +122,71 @@ test("model state handles both envelope and direct payload forms", () => {
     type: "generation_complete",
   });
   assert.deepEqual(modelMessage(null), {});
+});
+
+test("Orbis handshake includes both required receiving tracks even when generation audio is disabled", () => {
+  assert.deepEqual(ORBIS_TRACKS, [
+    { name: "main_video", kind: "video", direction: "recvonly" },
+    { name: "main_audio", kind: "audio", direction: "recvonly" },
+  ]);
+});
+
+test("empty acknowledgments wait for early or late model confirmation", async () => {
+  for (const early of [true, false]) {
+    const fake = fakeTransport((_command, emit) => {
+      if (early) emit({ type: "generation_started", data: {} });
+      else setTimeout(() => emit({ type: "generation_started", data: {} }), 5);
+      return undefined;
+    });
+    const response = await checkedCommand(
+      fake.transport,
+      "start",
+      {},
+      "generation_started",
+      undefined,
+      100,
+    );
+    assert.equal(response.type, "generation_started");
+    assert.equal(fake.listeners.size, 0);
+  }
+});
+
+test("empty acknowledgments cannot report success without confirmation or after cancellation", async () => {
+  const fake = fakeTransport(() => undefined);
+  await assert.rejects(
+    checkedCommand(
+      fake.transport,
+      "start",
+      {},
+      "generation_started",
+      undefined,
+      5,
+    ),
+    /did not acknowledge start/,
+  );
+  const abort = new AbortController();
+  const running = checkedCommand(
+    fake.transport,
+    "start",
+    {},
+    "generation_started",
+    abort.signal,
+  );
+  const rejection = assert.rejects(running, { name: "AbortError" });
+  abort.abort();
+  fake.emit({ type: "generation_started" });
+  await rejection;
+  assert.equal(fake.listeners.size, 0);
+});
+
+test("account session limits are actionable and never expose provider error bodies", () => {
+  const failure = orbisFailure({
+    code: "RATE_LIMITED",
+    message: "private token and prompt details",
+  });
+  assert.equal(failure.status, "Video session limit reached");
+  assert.match(failure.message, /Close unused Reactor sessions or wait/);
+  assert.match(failure.message, /illustration/);
+  assert.ok(!JSON.stringify(failure).includes("private token"));
+  assert.equal(orbisFailure({ code: "private token" }).code, "SESSION_ERROR");
 });

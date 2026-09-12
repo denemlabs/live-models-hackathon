@@ -17,6 +17,9 @@ export default defineConfig({
     },
     react(),
   ],
-  optimizeDeps: { exclude: ["@reactor-team/js-sdk"] },
-  server: { hmr: { port: 24678 } },
+  optimizeDeps: {
+    exclude: ["@reactor-team/js-sdk"],
+    include: ["@reactor-team/js-sdk > awaitqueue"],
+  },
+  server: { hmr: { port: Number(process.env.HMR_PORT || 24678) } },
 });

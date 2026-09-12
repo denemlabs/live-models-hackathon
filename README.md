@@ -30,9 +30,9 @@ ELEVENLABS_API_KEY=your-elevenlabs-key
 
 Do not commit keys, put them in client code, or prefix them with `VITE_`. The server exchanges the Reactor key for a 10-minute, model-scoped token limited to one session, and the ElevenLabs key for a single conversation token. The browser receives only those short-lived tokens.
 
-The Reactor key must have access to `reactor/visko-orbis-stable`. An Orbis/Visko credential that cannot mint tokens at Reactor is not interchangeable with a Reactor API key. The ElevenLabs key needs the Agents platform; a text-to-speech-only key cannot open a call.
+The Reactor key must have access to `reactor/visko-orbis-stable`. An Orbis/Visko credential that cannot mint tokens at Reactor is not interchangeable with a Reactor API key. The ElevenLabs key does two jobs: narration needs only text-to-speech, but story calls need the Agents platform, so a text-to-speech-only key narrates pages without being able to place a call.
 
-Each provider is independent. Without a Reactor key, GPT stories and story calls still work with illustrated previews. Without an ElevenLabs key, the storybook still works.
+Each provider is independent. Without a Reactor key, GPT stories and story calls still work with illustrated previews. Without an ElevenLabs key, the storybook still works with the browser voice.
 
 Optional configuration:
 
@@ -40,10 +40,11 @@ Optional configuration:
 | ------------------------- | ---------------------------- | ----------------------------------------------------------------- |
 | `OPENAI_STORY_MODEL`      | `gpt-4.1-mini`               | Structured story generation                                       |
 | `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe`     | Voice transcription                                               |
-| `REACTOR_MODEL`           | `reactor/visko-orbis-stable` | Live picture generation                                           |
+| `ELEVENLABS_VOICE_ID`     | `JBFqnCBsd6RMkjVDRZzb`       | The storyteller's voice, for both narration and story calls       |
+| `ELEVENLABS_MODEL`        | `eleven_flash_v2_5`          | Narration model                                                   |
 | `ELEVENLABS_AGENT_ID`     | provisioned on first call    | Pin an existing storyteller agent instead of creating one         |
-| `ELEVENLABS_VOICE_ID`     | `JBFqnCBsd6RMkjVDRZzb`       | The storyteller's voice                                           |
 | `ELEVENLABS_LLM`          | `gemini-2.5-flash`           | Model driving the live storyteller                                |
+| `REACTOR_MODEL`           | `reactor/visko-orbis-stable` | Live picture generation                                           |
 | `PORT`                    | `3000`                       | Local server port                                                 |
 | `APP_ACCESS_CODE`         | unset                        | Shared code required by API endpoints; enter in Grown-up settings |
 
@@ -54,9 +55,10 @@ Open **Grown-up settings** to allow live processing and select age, simpler lang
 1. Tap the microphone, say an idea, and tap again to send it (maximum 30 seconds). Typing is always available. This prototype uses turn-by-turn recording, not an always-on microphone.
 2. `/api/transcribe` handles an in-memory audio upload and asks OpenAI for the transcript.
 3. `/api/story` validates and moderates input, asks the Responses API for a structured page, and moderates that output before returning it. Requests use `store: false`.
-4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks the acknowledgment, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
-5. The child can ask a question, choose a direction, request a gentler scene, or ask for a cozy ending. Previous pages remain available in memory. Narration, recording, and video can be paused; a new story releases the video session.
-6. At any point, **Call the storyteller** swaps turn-taking for a live conversation. See [Story calls](#story-calls).
+4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks direct replies or matching model events, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
+5. In live mode with grown-up consent, `/api/narrate` sends only the narrated page text to ElevenLabs. Short MP3s are buffered in memory before playback; stopping, changing pages, or recording cancels narration. Demo mode and provider failures use browser speech synthesis.
+6. The child can ask a question, choose a direction, request a gentler scene, or ask for a cozy ending. Previous pages remain available in memory. Narration, recording, and video can be paused; a new story releases the video session.
+7. At any point, **Call the storyteller** swaps turn-taking for a live conversation. See [Story calls](#story-calls).
 
 Story text and visual generation are asynchronous. Reactor documents multi-minute cold starts and approximately 1.8-second prompt-update boundaries after startup. The interface shows connection progress and offers reconnection. There is no frame-accurate synchronization between narration and video yet.
 
@@ -82,7 +84,7 @@ Turn detection is set to `patient` with a 12-second timeout, because children th
 - Parent-selected age range and access preferences; no account, name, camera, or diagnosis required.
 - No emotion recognition from voice. Explicit statements such as “I feel scared” and chosen story directions inform the response.
 - The app does not write recordings, transcripts, profiles, or stories to disk or a database. Refreshing clears the session. Audio is held briefly in memory for transcription. Call captions live only in browser memory and disappear when the call ends.
-- OpenAI receives audio, story text/history, and age/language preferences. Reactor receives fictional visual prompts. ElevenLabs receives live microphone audio for the duration of a call, plus the composed storyteller prompt and the story so far. Provider retention policies apply; `store: false` is not a claim of zero data retention, and ElevenLabs retains conversations according to its own workspace settings.
+- OpenAI receives audio, story text/history, and age/language preferences. Reactor receives fictional visual prompts. ElevenLabs receives narrated page text when live narration is enabled, and during a story call it also receives live microphone audio, the composed storyteller prompt, and the story so far. Provider retention policies apply; `store: false` is not a claim of zero data retention, and ElevenLabs retains conversations according to its own workspace settings.
 - A story call is a continuously open microphone for as long as it lasts, unlike the rest of the app. The call screen shows the connection state, elapsed time, and a mute control, and ending the call closes the stream.
 - Input/output moderation and story constraints reduce risk but cannot guarantee child-safe text or video. This is a supervised hackathon prototype, not a production child-facing service. Before real child testing or a public launch, review provider requirements for minors, retention/consent, visual safety, authentication, and spending limits.
 - The development server binds to loopback; production listens on `0.0.0.0` and Railway’s assigned `PORT`. Use proper authentication and provider usage limits before exposing paid API endpoints; the optional shared code is only a hackathon safeguard.
@@ -95,23 +97,24 @@ npm run build
 npm start
 ```
 
-Tests exercise demo continuity and calming reactions, invalid input, missing keys, origin/access-code checks, audio validation, age/accessibility prompting, Reactor token scoping, and the storyteller's one-time agent provisioning, agent reuse, pinned-agent behaviour, prompt composition, and tool contract. Browser checks cover creating and steering a story, pause/resume, history, parent settings, the call screen on desktop and mobile, and desktop/mobile layouts. Live provider calls require real API keys and have not yet been verified.
+Tests exercise demo continuity and calming reactions, invalid input, missing keys, origin/access-code checks, audio validation, age/accessibility prompting, Reactor token scoping, and the storyteller's one-time agent provisioning, agent reuse, pinned-agent behaviour, prompt composition, and tool contract. Browser checks cover creating and steering a story, pause/resume, history, parent settings, the call screen on desktop and mobile, and desktop/mobile layouts. OpenAI story generation and transcription have been verified against the deployment. Orbis video has also been verified locally at 2560×1440 with advancing playback, prompt updates, and pause/resume. Live story calls require an ElevenLabs key with Agents access and have not yet been verified.
 
 ## API references
 
 - [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
 - [OpenAI speech transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
+- [ElevenLabs text-to-speech API](https://elevenlabs.io/docs/api-reference/text-to-speech/stream)
 - [Reactor Orbis Stable API](https://www.reactor.inc/models/visko-orbis-stable/api)
 - [ElevenLabs Agents React SDK](https://elevenlabs.io/docs/agents-platform/libraries/react)
 - [ElevenLabs client tools](https://elevenlabs.io/docs/eleven-agents/customization/tools/client-tools)
 
 ## Organizer starter compatibility
 
-The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-starter) is the reference for our Orbis session lifecycle. Both projects use Reactor SDK 3.0.2 and `reactor/visko-orbis-stable`, with server-side, model-scoped, single-session token minting.
+The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-starter) is the reference for our Orbis session lifecycle. Both projects use Reactor SDK 3.0.2 and `reactor/visko-orbis-stable`, with server-side, model-scoped, single-session token minting. The handshake declares both `main_video` and `main_audio`: Orbis requires the full track list even when audio generation is disabled.
 
-Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Regression tests cover early/late readiness, rejected commands, timeout, and cancellation.
+Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Some commands return an empty acknowledgment and broadcast their confirmation separately. We subscribe before sending, accept either a direct matching reply or a matching event, and require confirmation before reporting success. Regression tests cover the track contract, early/late events, empty acknowledgments, rejected commands, timeout, and cancellation.
 
-The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from the browser. Live provider behavior still needs verification with real keys.
+The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from ElevenLabs or the browser.
 
 ## Railway deployment
 

@@ -1835,3 +1835,73 @@ dialog::backdrop {
 .or-line {
   font-size: 12px;
 }
+
+.contribution {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #446651;
+  margin: 0 0 18px;
+}
+.contribution svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.answer-label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 1.4px;
+  color: #776048;
+  margin: 20px 0 8px;
+}
+.interaction-modes {
+  display: flex;
+  gap: 8px;
+  margin: 16px 0 10px;
+  flex-wrap: wrap;
+}
+.interaction-modes button {
+  border: 1px solid #d9dfd1;
+  border-radius: 20px;
+  background: transparent;
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.interaction-modes button[aria-pressed="true"] {
+  background: #e8efdf;
+  border-color: #7e9575;
+  color: #284b36;
+}
+.interaction-hint {
+  color: #696d61;
+  font-size: 12px;
+  line-height: 1.7;
+  margin: 0 0 12px;
+}
+.adaptive-help {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: #eef1e6;
+  border-radius: 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-top: 16px;
+}
+.adaptive-help button {
+  background: #fffdf7;
+  border: 1px solid #d5dbc9;
+  padding: 9px 12px;
+  border-radius: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.choices-roomy button {
+  min-height: 64px;
+  font-size: 16px;
+}

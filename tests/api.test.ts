@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../server/app";
-import { demoPage, ProfileSchema, storyInstructions } from "../shared/story";
+import {
+  demoPage,
+  ProfileSchema,
+  StoryRequestSchema,
+  finalizePage,
+  storyInstructions,
+} from "../shared/story";
 
 const profile = ProfileSchema.parse({});
 async function withServer(
@@ -127,7 +133,11 @@ test("recording endpoint rejects unsupported content before provider calls", asy
   });
 });
 test("young-reader and accessibility preferences shorten text and shape prompt constraints", () => {
-  const data = { input: "forest", topic: "", history: [], profile, demo: true };
+  const data = StoryRequestSchema.parse({
+    input: "forest",
+    profile,
+    demo: true,
+  });
   assert.ok(
     demoPage({ ...data, profile: { ...profile, simpleLanguage: true } })
       .narrative.length < demoPage(data).narrative.length,
@@ -212,4 +222,164 @@ test("Railway healthcheck is public and HTTPS proxy requests retain origin valid
       );
     },
   );
+});
+
+test("narration validates input and requires a configured provider", async () => {
+  await withServer({}, async (base) => {
+    for (const text of ["", " ", "x".repeat(2001), 123]) {
+      assert.equal((await post(`${base}/api/narrate`, { text })).status, 400);
+    }
+    assert.equal(
+      (await post(`${base}/api/narrate`, { text: "A friendly fox." })).status,
+      503,
+    );
+  });
+});
+
+test("narration returns audio while keeping provider keys and failures private", async () => {
+  const original = globalThis.fetch;
+  let fail = false;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).startsWith("https://api.elevenlabs.io/")) {
+      assert.equal(
+        (init!.headers as Record<string, string>)["xi-api-key"],
+        "test-voice-secret",
+      );
+      assert.match(
+        String(input),
+        /test-voice\/stream\?output_format=mp3_44100_128$/,
+      );
+      const data = JSON.parse(init!.body as string);
+      assert.equal(data.text, "A friendly fox.");
+      assert.equal(data.model_id, "eleven_flash_v2_5");
+      assert.equal(data.apiKey, undefined);
+      return fail
+        ? new Response("private provider details test-voice-secret", {
+            status: 401,
+          })
+        : new Response(new Uint8Array([73, 68, 51, 4]), {
+            headers: { "Content-Type": "audio/mpeg" },
+          });
+    }
+    return original(input, init);
+  };
+  try {
+    await withServer(
+      {
+        ELEVENLABS_API_KEY: "test-voice-secret",
+        ELEVENLABS_VOICE_ID: "test-voice",
+        APP_ACCESS_CODE: "test-access",
+      },
+      async (base) => {
+        const body = { text: "A friendly fox." };
+        assert.equal((await post(`${base}/api/narrate`, body)).status, 401);
+        const headers = { "x-access-code": "test-access" };
+        assert.equal(
+          (
+            await post(`${base}/api/narrate`, body, {
+              ...headers,
+              origin: "https://unrelated.example",
+            })
+          ).status,
+          403,
+        );
+        const response = await post(`${base}/api/narrate`, body, headers);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get("content-type")!, /^audio\/mpeg/);
+        assert.equal(response.headers.get("cache-control"), "no-store");
+        assert.deepEqual(
+          new Uint8Array(await response.arrayBuffer()),
+          new Uint8Array([73, 68, 51, 4]),
+        );
+        const config = await (await fetch(`${base}/api/config`)).json();
+        assert.equal(config.elevenlabs, true);
+        assert.ok(!JSON.stringify(config).includes("test-voice-secret"));
+        fail = true;
+        const failed = await post(`${base}/api/narrate`, body, headers);
+        assert.equal(failed.status, 502);
+        assert.ok(!(await failed.text()).includes("test-voice-secret"));
+      },
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
+test("questions preserve the scene and explicit modes override model routing", () => {
+  const start = StoryRequestSchema.parse({
+    input: "moon rabbit",
+    profile,
+    demo: true,
+  });
+  const first = demoPage(start);
+  const question = StoryRequestSchema.parse({
+    ...start,
+    input: "Why does the moon shine?",
+    history: [first],
+    interaction: "question",
+  });
+  const answer = demoPage(question);
+  assert.equal(answer.responseKind, "answer");
+  assert.match(answer.narrative, /Sunlight/);
+  assert.equal(answer.visualPrompt, first.visualPrompt);
+  assert.equal(answer.visualChange, "");
+  const corrected = finalizePage(
+    {
+      ...answer,
+      responseKind: "story",
+      theme: "forest",
+      title: "Wrong title",
+      visualPrompt: "Wrong scene",
+    },
+    question,
+  );
+  assert.equal(corrected.responseKind, "answer");
+  assert.equal(corrected.title, first.title);
+  assert.equal(corrected.theme, first.theme);
+  assert.equal(corrected.visualPrompt, first.visualPrompt);
+  const continuation = demoPage({
+    ...question,
+    input: "Find a friend",
+    interaction: "continue",
+  });
+  assert.equal(continuation.responseKind, "story");
+  assert.ok(continuation.visualChange);
+});
+
+test("calm, simpler words, and endings are separate story actions", async () => {
+  await withServer({}, async (base) => {
+    const initial = await (
+      await post(`${base}/api/story`, { input: "forest", profile, demo: true })
+    ).json();
+    for (const [interaction, kind] of [
+      ["calm", "calm"],
+      ["simplify", "simplify"],
+      ["ending", "ending"],
+    ]) {
+      const response = await post(`${base}/api/story`, {
+        input: "Please help",
+        profile,
+        demo: true,
+        history: [initial.page],
+        interaction,
+      });
+      assert.equal(response.status, 200);
+      const { page } = await response.json();
+      assert.equal(page.responseKind, kind);
+      assert.equal(page.title, initial.page.title);
+      if (kind === "simplify") assert.equal(page.visualChange, "");
+      if (kind === "ending") assert.match(page.narrative, /The end/);
+    }
+    assert.equal(
+      (
+        await post(`${base}/api/story`, {
+          input: "forest",
+          profile,
+          demo: true,
+          interaction: "execute-code",
+        })
+      ).status,
+      400,
+    );
+  });
 });
