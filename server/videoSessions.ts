@@ -81,11 +81,42 @@ export class VideoSessions {
           "The previous video is still closing. Please try again shortly.",
         );
     }
+    if (old.expiresAt > this.now()) {
+      let closed = false;
+      for (let poll = 0; poll < 20; poll++) {
+        const stateResponse = await this.request(
+          `${API}/sessions/${encodeURIComponent(old.sessionId)}`,
+          {
+            headers: headers(old.jwt),
+            signal: AbortSignal.timeout(10000),
+          },
+        );
+        if (stateResponse.status === 404 || stateResponse.status === 410) {
+          closed = true;
+          break;
+        }
+        if (!stateResponse.ok)
+          throw new VideoSessionError(
+            "The previous video is still closing. Please try again shortly.",
+          );
+        const state = (await stateResponse.json()) as { state?: string };
+        if (state.state === "CLOSED" || state.state === "INACTIVE") {
+          closed = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+      if (!closed)
+        throw new VideoSessionError(
+          "Reactor is still releasing the previous video. Reconnect shortly to finish the takeover.",
+        );
+    }
     this.active = null;
     await this.save();
   }
   open() {
     return this.serial(async () => {
+      const previousProvider = this.active?.provider;
       await this.end();
       const model = this.env.REACTOR_MODEL || "reactor/visko-orbis-stable";
       for (const provider of ["primary", "backup"] as const) {
@@ -125,7 +156,8 @@ export class VideoSessions {
             "The video account did not return a session token.",
           );
         // A just-terminated GPU session may take a moment to release its quota.
-        for (let attempt = 0; attempt < 3; attempt++) {
+        const attempts = provider === previousProvider ? 10 : 3;
+        for (let attempt = 0; attempt < attempts; attempt++) {
           const response = await this.request(`${API}/sessions`, {
             method: "POST",
             headers: headers(jwt),
@@ -137,14 +169,14 @@ export class VideoSessions {
             signal: AbortSignal.timeout(20000),
           });
           if (response.status === 429) {
-            if (attempt < 2) {
+            if (attempt < attempts - 1) {
               const retry = Number(response.headers.get("retry-after"));
               await new Promise((resolve) =>
                 setTimeout(
                   resolve,
                   Number.isFinite(retry) && retry > 0
                     ? Math.min(retry * 1000, 10000)
-                    : 2000,
+                    : 4000,
                 ),
               );
               continue;

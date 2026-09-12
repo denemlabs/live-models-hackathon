@@ -18,6 +18,7 @@ function provider() {
   const calls: string[] = [];
   const request: typeof fetch = async (input, init) => {
     const path = new URL(String(input)).pathname;
+    if (!init?.method) return Response.json({ state: "CLOSED" });
     calls.push(`${init?.method} ${path}`);
     if (path === "/tokens") {
       const body = JSON.parse(init!.body as string);
@@ -126,4 +127,23 @@ test("an occupied untracked primary falls back to the separate backup account", 
       "Bearer primary-jwt",
       "Bearer backup-jwt",
     ]);
+  }));
+
+test("replacement waits for terminal state after the delete acknowledgement", async () =>
+  fixture(async (file) => {
+    const mock = provider();
+    let polls = 0;
+    const manager = new VideoSessions(env, file, async (input, init) => {
+      if (!init?.method)
+        return Response.json({ state: ++polls === 1 ? "ACTIVE" : "CLOSED" });
+      if (
+        String(input).endsWith("/tokens") &&
+        mock.calls.includes("DELETE /sessions/session-1")
+      )
+        assert.equal(polls, 2);
+      return mock.request(input, init);
+    });
+    await manager.open();
+    await manager.open();
+    assert.equal(polls, 2);
   }));
