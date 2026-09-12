@@ -12,6 +12,7 @@ import {
   type SceneArgs,
 } from "../shared/storyteller";
 import { api } from "./api";
+import { storyAudioSession } from "./audioSession";
 
 export type Caption = {
   id: number;
@@ -52,6 +53,8 @@ export function useStoryteller(options: {
     preparePictures: options.preparePictures,
   };
   const attempt = useRef(0);
+  const releaseCapture = useRef<(() => void) | null>(null);
+  const callStarted = useRef(false);
 
   const settlePage = useCallback(() => {
     if (settle.current) clearTimeout(settle.current);
@@ -106,6 +109,16 @@ export function useStoryteller(options: {
 
   const { startSession, endSession } = conversation;
   const start = useCallback(async () => {
+    if (releaseCapture.current) return;
+    const releaseAudio = storyAudioSession.capture();
+    const release = () => {
+      releaseAudio();
+      if (releaseCapture.current === release) {
+        releaseCapture.current = null;
+        callStarted.current = false;
+      }
+    };
+    releaseCapture.current = release;
     const current = ++attempt.current;
     setError("");
     setCaptions([]);
@@ -118,7 +131,10 @@ export function useStoryteller(options: {
         audio: true,
       });
       permission.getTracks().forEach((track) => track.stop());
-      if (current !== attempt.current) return;
+      if (current !== attempt.current) {
+        release();
+        return;
+      }
       const [session, picturesReady] = await Promise.all([
         api<{
           token: string;
@@ -130,18 +146,26 @@ export function useStoryteller(options: {
         ),
         latest.current.preparePictures(),
       ]);
-      if (current !== attempt.current) return;
+      if (current !== attempt.current) {
+        release();
+        return;
+      }
       if (!picturesReady)
         throw new Error(
           "The live picture isn’t ready yet. Please reconnect the pictures, then try the call again.",
         );
-      await startSession({
+      callStarted.current = true;
+      startSession({
         conversationToken: session.token,
         connectionType: "webrtc",
         ...(session.overrides ? { overrides: session.overrides } : {}),
+        onDisconnect: release,
+        onStatusChange: ({ status }) => {
+          if (status === "disconnected") release();
+        },
       });
-      if (current !== attempt.current) endSession();
     } catch (e) {
+      release();
       if (current !== attempt.current) return;
       setError(
         e instanceof DOMException
@@ -162,6 +186,7 @@ export function useStoryteller(options: {
     pendingPage.current = null;
     spoken.current = [];
     endSession();
+    if (!callStarted.current) releaseCapture.current?.();
   }, [endSession]);
 
   useEffect(
@@ -169,6 +194,7 @@ export function useStoryteller(options: {
       attempt.current++;
       if (settle.current) clearTimeout(settle.current);
       endSession();
+      if (!callStarted.current) releaseCapture.current?.();
     },
     [endSession],
   );

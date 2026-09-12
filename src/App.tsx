@@ -423,6 +423,7 @@ export default function App({
     setTyping(true);
   }
   function replay() {
+    mic.cancel();
     setSound(true);
     setReplays((value) => value + 1);
     void read(pageNarration(aside || page));
@@ -472,6 +473,7 @@ export default function App({
     setLastWords(stage === "gentler" ? "Make the story gentler." : "");
   }
   function flip(index: number) {
+    mic.cancel();
     mute();
     setOptionsOpen(false);
     setAside(null);

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import { SpeechTurn } from "./speechTurn";
+import { storyAudioSession } from "./audioSession";
 export function useMicrophone(
   accessCode: string,
   onTranscript: (text: string) => void,
@@ -13,12 +14,15 @@ export function useMicrophone(
   const media = useRef<MediaStream | null>(null);
   const timeout = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const generation = useRef(0);
+  const pendingPermission = useRef(false);
   const abort = useRef<AbortController | null>(null);
   const stopMeter = useRef<() => void>(() => {});
+  const releaseCapture = useRef<() => void>(() => {});
   const callbacks = useRef({ onTranscript, onError });
   callbacks.current = { onTranscript, onError };
   const cancel = useCallback(() => {
     generation.current++;
+    pendingPermission.current = false;
     stopMeter.current();
     clearTimeout(timeout.current);
     abort.current?.abort();
@@ -28,6 +32,7 @@ export function useMicrophone(
     }
     media.current?.getTracks().forEach((t) => t.stop());
     media.current = null;
+    releaseCapture.current();
     setRecording(false);
     setRequesting(false);
     setTranscribing(false);
@@ -38,8 +43,13 @@ export function useMicrophone(
         recorder.current.stop();
         return;
       }
+      if (media.current || pendingPermission.current) return;
       const current = ++generation.current;
+      pendingPermission.current = true;
       setRequesting(true);
+      const releaseAudio = storyAudioSession.capture();
+      releaseCapture.current = releaseAudio;
+      let ownedStream: MediaStream | undefined;
       try {
         if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder)
           throw new Error(
@@ -49,11 +59,14 @@ export function useMicrophone(
           audio: { echoCancellation: true, noiseSuppression: true },
           video: false,
         });
+        ownedStream = stream;
         if (generation.current !== current) {
           stream.getTracks().forEach((t) => t.stop());
+          releaseAudio();
           return;
         }
         media.current = stream;
+        pendingPermission.current = false;
         const mimeType = [
           "audio/webm;codecs=opus",
           "audio/mp4",
@@ -71,11 +84,13 @@ export function useMicrophone(
         r.onstop = async () => {
           if (generation.current !== current) {
             stream.getTracks().forEach((track) => track.stop());
+            releaseAudio();
             return;
           }
           stopMeter.current();
           clearTimeout(timeout.current);
           stream.getTracks().forEach((t) => t.stop());
+          releaseAudio();
           media.current = null;
           if (generation.current !== current) return;
           setRecording(false);
@@ -160,7 +175,12 @@ export function useMicrophone(
           if (r.state === "recording") r.stop();
         }, 30000);
       } catch (e) {
+        ownedStream?.getTracks().forEach((track) => track.stop());
+        releaseAudio();
         if (generation.current === current) {
+          pendingPermission.current = false;
+          media.current = null;
+          setRecording(false);
           setRequesting(false);
           callbacks.current.onError(
             e instanceof DOMException && e.name === "NotAllowedError"

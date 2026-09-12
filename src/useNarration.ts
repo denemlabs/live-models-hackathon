@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { playWhenReady } from "./pictureGate";
+import { storyAudioSession } from "./audioSession";
 
 type Options = {
   cloudVoice: boolean;
@@ -97,6 +98,7 @@ export function useNarration(options: Options) {
           utterance.pitch = 1.05;
           utterance.onend = completed;
           utterance.onerror = finish;
+          storyAudioSession.playback();
           window.speechSynthesis.speak(utterance);
         },
       );
@@ -141,7 +143,10 @@ export function useNarration(options: Options) {
       await playWhenReady(
         picture,
         () => current === generation.current,
-        () => player.play(),
+        () => {
+          storyAudioSession.playback();
+          return player.play();
+        },
       );
       if (!(await picture)) finish();
     } catch {
