@@ -2,7 +2,7 @@
 
 A living fairy-tale storybook made for the [Live Models Hackathon](https://luma.com/gh4256ju), hosted by Visko, Reactor, and Nebius. Work lives on the `simon` branch.
 
-Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. A visible opening box collects the topic. Story text and numbered choices appear over live Orbis video, and natural AI narration reads the same story, question and options. The welcome forest animation is hidden once a story starts so it cannot be mistaken for generated video.
+Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. Julian’s full-screen welcome invites a spoken topic, with Type instead opening a text field. Story text and numbered choices appear over live Orbis video, and natural AI narration reads the same story, question and options. The welcome forest animation is hidden once a story starts so it cannot be mistaken for generated video.
 
 There are two ways to hear a story. The **storybook** is turn-by-turn: say or type an idea, read the page, choose what happens next. A **story call** is live: an ElevenLabs storyteller joins over WebRTC and tells the story out loud in real time, listening while it speaks, and filling in the storybook pages as it goes.
 

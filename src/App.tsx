@@ -865,47 +865,16 @@ export default function App({
                 )}
               </div>
             )}
-            {!page && !waitingForStory && (
-              <div className="welcome-question story-topic-card float-surface">
+            {!page && !typing && !waitingForStory && (
+              <div className="welcome-question">
                 <span className="welcome-kicker">
                   A LITTLE VOICE. A WORLD OF WONDER.
                 </span>
-                <h1>What would you like your story to be about?</h1>
-                <form
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (canSubmit) respond(input);
-                  }}
-                >
-                  <label className="sr-only" htmlFor="topic-idea">
-                    Your story idea
-                  </label>
-                  <input
-                    id="topic-idea"
-                    value={input}
-                    maxLength={1000}
-                    onChange={(event) => setInput(event.target.value)}
-                    placeholder="I want a story about…"
-                    disabled={locked || micBusy || mic.recording}
-                  />
-                  <button className="start-story" disabled={!canSubmit}>
-                    Begin my story <ArrowRight size={18} />
-                  </button>
-                </form>
-                <button
-                  className="topic-mic"
-                  onClick={toggleMic}
-                  disabled={locked || micBusy || !config}
-                >
-                  {mic.recording ? <AudioLines size={19} /> : <Mic size={19} />}
-                  {mic.recording ? "Finish recording" : "Tell me your idea"}
-                </button>
-                {demo && (
-                  <p className="sample-mode-note">
-                    Sample mode: curated stories and browser voice. Live
-                    storytelling needs the connected APIs.
-                  </p>
-                )}
+                <h1>
+                  What story shall
+                  <br className="desktop-break" /> we step into?
+                </h1>
+                <p>Your imagination opens the door.</p>
               </div>
             )}
             {page && !typing && (
@@ -923,7 +892,7 @@ export default function App({
                 </button>
                 <span>Keep the wonder. Rest a little.</span>
               </div>
-            ) : page ? (
+            ) : !waitingForStory ? (
               <section
                 className="immersive-composer"
                 aria-label={page ? "Shape the story" : "Create your story"}
@@ -939,7 +908,9 @@ export default function App({
                             : "Simulate a child reaction"
                           : mic.recording
                             ? "Finish recording"
-                            : "Answer out loud"
+                            : page
+                              ? "Answer out loud"
+                              : "Tell your story idea"
                       }
                       disabled={locked || micBusy || !config}
                       onClick={toggleMic}
@@ -963,9 +934,11 @@ export default function App({
                             ? "Turning your voice into words…"
                             : paused
                               ? "Resume to keep imagining"
-                              : page.choices.length === 2
-                                ? "Say one, two, or your idea"
-                                : "Tell me your idea"}
+                              : !page
+                                ? "Tap to talk"
+                                : page.choices.length === 2
+                                  ? "Say one, two, or your idea"
+                                  : "Tell me your idea"}
                     </span>
                     <button
                       ref={typeButtonRef}
