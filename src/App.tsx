@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import {
   ProfileSchema,
+  choiceVisualFor,
   type Profile,
   type StoryPage,
   type Interaction,
@@ -158,6 +159,7 @@ export default function App() {
   async function tell(
     words: string,
     interaction: Interaction = questionMode ? "question" : "auto",
+    choiceIndex?: number,
   ) {
     const calming = interaction === "calm" && !!page;
     if (!words.trim() || ((busy || paused) && !calming)) return;
@@ -191,6 +193,14 @@ export default function App() {
       const branch = pages.slice(0, pageIndex + 1);
       const history =
         branch.length > 12 ? [branch[0], ...branch.slice(-11)] : branch;
+      // These plans were generated and moderated with the previous page.
+      // Dispatch before requesting text; never wait for the next GPT response.
+      const preparedChoice =
+        interaction === "continue" && !demo && config?.reactor
+          ? choiceVisualFor(page, choiceIndex, words)
+          : undefined;
+      if (preparedChoice)
+        void orbis.steer(preparedChoice.scene, preparedChoice.change);
       const result = await api<{ page: StoryPage }>(
         "/api/story",
         {
@@ -200,6 +210,7 @@ export default function App() {
           profile,
           demo,
           interaction,
+          choiceIndex,
           conversation,
         },
         accessCode,
@@ -235,7 +246,7 @@ export default function App() {
         orbis.stop();
         setPaused(true);
       }
-      if (!isAside && !isCalm && !demo && config?.reactor)
+      if (!preparedChoice && !isAside && !isCalm && !demo && config?.reactor)
         void orbis.steer(result.page.visualPrompt, result.page.visualChange);
       setInput("");
       setOpening(false);
@@ -749,16 +760,20 @@ export default function App() {
                             </button>
                           </div>
                         ) : (
-                          page.choices.slice(0, 2).map((choice) => (
-                            <button
-                              key={choice}
-                              disabled={locked || mic.recording || micBusy}
-                              onClick={() => void tell(choice, "continue")}
-                            >
-                              {choice}
-                              <ArrowRight size={15} />
-                            </button>
-                          ))
+                          page.choices
+                            .slice(0, 2)
+                            .map((choice, choiceIndex) => (
+                              <button
+                                key={choice}
+                                disabled={locked || mic.recording || micBusy}
+                                onClick={() =>
+                                  void tell(choice, "continue", choiceIndex)
+                                }
+                              >
+                                {choice}
+                                <ArrowRight size={15} />
+                              </button>
+                            ))
                         )}
                       </div>
                       <div className="page-bottom">
@@ -965,6 +980,11 @@ export default function App() {
                 <p className="last-words">Your words: “{lastWords}”</p>
               )}
             </div>
+            {orbis.promptStatus && (
+              <p className="working-note" role="status">
+                {orbis.promptStatus}
+              </p>
+            )}
             {busy && !opening && (
               <p className="working-note" role="status">
                 <LoaderCircle className="spin" size={16} /> Listening to your
