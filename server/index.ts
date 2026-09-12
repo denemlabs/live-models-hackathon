@@ -5,6 +5,12 @@ import { createApp } from "./app";
 // dotenv never overwrites what is already set, so the first file listed wins.
 config({ path: [".env.local", ".env"], quiet: true });
 const app = createApp();
+const cleanup = setInterval(() => {
+  void app.locals.videoSessions
+    .reap()
+    .catch(() => console.warn("Video session cleanup will retry"));
+}, 30000);
+cleanup.unref();
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(resolve("dist")));
   app.get("/{*path}", (_req, res) => res.sendFile(resolve("dist/index.html")));

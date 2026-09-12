@@ -1,4 +1,6 @@
 import express from "express";
+import { join } from "node:path";
+import { VideoSessions, VideoSessionError } from "./videoSessions";
 import multer from "multer";
 import { rateLimit } from "express-rate-limit";
 import OpenAI, { toFile } from "openai";
@@ -248,6 +250,68 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       });
     }
   });
+  const sessions = new VideoSessions(
+    env,
+    env.VIDEO_SESSION_STORE ||
+      join(env.RAILWAY_VOLUME_MOUNT_PATH || ".data", "video-session.json"),
+  );
+  app.locals.videoSessions = sessions;
+  app.post("/api/reactor/session", async (_req, res) => {
+    let disconnected = false;
+    let leaseId: string | undefined;
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        disconnected = true;
+        if (leaseId) void sessions.release(leaseId).catch(() => {});
+      }
+    });
+    try {
+      const lease = await sessions.open();
+      leaseId = lease.leaseId;
+      if (disconnected) {
+        await sessions.release(lease.leaseId);
+        return;
+      }
+      res.json({
+        leaseId: lease.leaseId,
+        sessionId: lease.sessionId,
+        jwt: lease.jwt,
+        model: lease.model,
+        provider: lease.provider,
+      });
+    } catch (e) {
+      if (!disconnected)
+        res.status(e instanceof VideoSessionError ? e.status : 502).json({
+          error:
+            e instanceof VideoSessionError
+              ? e.message
+              : "The video connection could not be prepared. Please retry.",
+        });
+    }
+  });
+  for (const action of ["heartbeat", "release"] as const) {
+    app.post(`/api/reactor/session/${action}`, async (req, res) => {
+      const parsed = z
+        .object({ leaseId: z.string().uuid() })
+        .safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: "Invalid video session." });
+        return;
+      }
+      try {
+        const active =
+          action === "heartbeat"
+            ? await sessions.heartbeat(parsed.data.leaseId)
+            : await sessions.release(parsed.data.leaseId);
+        res.json({ active: action === "heartbeat" ? active : false });
+      } catch {
+        res.status(502).json({
+          error:
+            "Video cleanup could not complete. The next connection will retry it.",
+        });
+      }
+    });
+  }
   app.post("/api/reactor/token", async (req, res) => {
     const selected = z
       .object({ provider: z.enum(["primary", "backup"]).default("primary") })
@@ -278,7 +342,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
             {
               type: "session",
               resources: { models: { match: [model] } },
-              constraints: { max_sessions: 1 },
+              constraints: {
+                max_sessions: 1,
+                max_session_duration_seconds: 480,
+              },
             },
           ],
         }),

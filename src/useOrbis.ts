@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Reactor } from "@reactor-team/js-sdk";
 import { api } from "./api";
-import { acquireVideoSlot } from "./videoSlot";
-import { connectWithBackup } from "./videoFallback";
 import {
   checkedCommand,
   ORBIS_TRACKS,
@@ -34,7 +32,7 @@ export function useOrbis(accessCode: string) {
   const [error, setError] = useState("");
   const commandQueue = useRef(Promise.resolve());
   const teardown = useRef(Promise.resolve());
-  const releaseSlot = useRef<(() => void) | null>(null);
+  const lease = useRef<string | null>(null);
   const stop = useCallback(() => {
     epoch.current++;
     controller.current.abort();
@@ -48,19 +46,25 @@ export function useOrbis(accessCode: string) {
     setStream(null);
     setStatus("Illustrated preview");
     setError("");
-    const release = releaseSlot.current;
-    releaseSlot.current = null;
-    // Hold the cross-tab slot until Reactor has finished closing the old session.
-    teardown.current = teardown.current
-      .then(async () => {
-        try {
-          await old?.disconnect();
-        } finally {
-          release?.();
-        }
-      })
-      .catch(() => {});
-  }, []);
+    const oldLease = lease.current;
+    lease.current = null;
+    // Send cleanup immediately, including during pagehide. The backend owns
+    // the session; browser disconnect only detaches its WebRTC transport.
+    const releaseRequest = oldLease
+      ? fetch("/api/reactor/session/release", {
+          method: "POST",
+          keepalive: true,
+          headers: {
+            "Content-Type": "application/json",
+            ...(accessCode ? { "x-access-code": accessCode } : {}),
+          },
+          body: JSON.stringify({ leaseId: oldLease }),
+        }).catch(() => {})
+      : Promise.resolve();
+    teardown.current = teardown.current.then(async () => {
+      await Promise.allSettled([old?.disconnect(), releaseRequest]);
+    });
+  }, [accessCode]);
   const fail = useCallback(
     (cause?: unknown) => {
       const failure = orbisFailure(cause);
@@ -110,133 +114,99 @@ export function useOrbis(accessCode: string) {
       try {
         await teardown.current;
         if (!currentSession()) return;
-        let backupAvailable = false;
-        const reactor = await connectWithBackup(
-          async (provider) => {
-            signal.throwIfAborted();
-            const token = await api<{
-              jwt: string;
-              model: string;
-              backupAvailable: boolean;
-            }>(
-              "/api/reactor/token",
-              { provider },
-              accessCode,
-              AbortSignal.any([signal, AbortSignal.timeout(20000)]),
-            );
-            backupAvailable = token.backupAvailable;
-            signal.throwIfAborted();
-            let attemptClient: Reactor | null = null;
-            let release: (() => void) | undefined;
-            try {
-              if (navigator.locks) {
-                release = await acquireVideoSlot(navigator.locks, provider);
-                if (!currentSession()) {
-                  release();
-                  signal.throwIfAborted();
-                }
-                releaseSlot.current = release;
-              }
-              const { Reactor } = await import("@reactor-team/js-sdk");
-              signal.throwIfAborted();
-              const reactor = new Reactor({
-                modelName: token.model,
-                apiUrl: "https://api.reactor.inc",
-                logLevel: "off",
-                readyTimeoutMs: 240000,
-                modelTracks: [...ORBIS_TRACKS],
-              });
-              attemptClient = reactor;
-              client.current = reactor;
-              let establishing = true;
-              const currentAttempt = () =>
-                currentSession() && client.current === reactor;
-              reactor.on("trackReceived", (name, _track, media) => {
-                if (currentAttempt() && name === "main_video") setStream(media);
-              });
-              reactor.on("error", (cause) => {
-                if (currentAttempt() && !establishing) fail(cause);
-              });
-              reactor.on("message", (raw) => {
-                if (!currentAttempt()) return;
-                const message = modelMessage(raw);
-                switch (message.type) {
-                  case "command_error":
-                    fail({ code: "MODEL_COMMAND_REJECTED" });
-                    break;
-                  case "generation_started":
-                    started.current = true;
-                    setStatus("Waiting for the first living picture…");
-                    break;
-                  case "generation_complete":
-                  case "generation_reset":
-                    started.current = false;
-                    setStatus("Ready for the next scene");
-                    break;
-                  case "generation_paused":
-                    setStatus("Pictures paused");
-                    break;
-                  case "generation_resumed":
-                    setStatus(
-                      provider === "backup"
-                        ? "Live pictures · backup"
-                        : "Live pictures",
-                    );
-                    break;
-                  case "chunk_complete":
-                    if (
-                      typeof message.frames_emitted === "number" &&
-                      message.frames_emitted > 0
-                    )
-                      setStatus(
-                        provider === "backup"
-                          ? "Live pictures · backup"
-                          : "Live pictures",
-                      );
-                    break;
-                  case "state":
-                    if (typeof message.started === "boolean")
-                      started.current = message.started;
-                    break;
-                }
-              });
-              reactor.on("statusChanged", (state) => {
-                if (
-                  currentAttempt() &&
-                  !establishing &&
-                  state === "disconnected"
-                )
-                  fail();
-              });
-
-              await reactor.connect(token.jwt);
-              establishing = false;
-              signal.throwIfAborted();
-              return reactor;
-            } catch (cause) {
-              if (currentSession()) {
-                // Detach listeners before closing; this failed attempt must not
-                // abort the next account's connection or overwrite its status.
-                if (client.current === attemptClient) client.current = null;
-                if (releaseSlot.current === release) releaseSlot.current = null;
-                try {
-                  await attemptClient?.disconnect();
-                } finally {
-                  release?.();
-                  setStream(null);
-                  started.current = false;
-                }
-              } else {
-                await teardown.current;
-              }
-              throw cause;
-            }
-          },
-          () => backupAvailable,
-          signal,
-          () =>
-            setStatus("First connection is busy. Trying backup live pictures…"),
+        setStatus("Closing the previous video and preparing yours…");
+        const token = await api<{
+          leaseId: string;
+          sessionId: string;
+          jwt: string;
+          model: string;
+          provider: "primary" | "backup";
+        }>(
+          "/api/reactor/session",
+          {},
+          accessCode,
+          AbortSignal.any([signal, AbortSignal.timeout(180000)]),
         );
+        if (!currentSession()) {
+          await api(
+            "/api/reactor/session/release",
+            { leaseId: token.leaseId },
+            accessCode,
+          );
+          return;
+        }
+        lease.current = token.leaseId;
+        const { Reactor } = await import("@reactor-team/js-sdk");
+        signal.throwIfAborted();
+        const provider = token.provider;
+        const reactor = new Reactor({
+          modelName: token.model,
+          apiUrl: "https://api.reactor.inc",
+          logLevel: "off",
+          readyTimeoutMs: 240000,
+          modelTracks: [...ORBIS_TRACKS],
+        });
+        client.current = reactor;
+        let establishing = true;
+        const currentAttempt = () =>
+          currentSession() && client.current === reactor;
+        reactor.on("trackReceived", (name, _track, media) => {
+          if (currentAttempt() && name === "main_video") setStream(media);
+        });
+        reactor.on("error", (cause) => {
+          if (currentAttempt() && !establishing) fail(cause);
+        });
+        reactor.on("message", (raw) => {
+          if (!currentAttempt()) return;
+          const message = modelMessage(raw);
+          switch (message.type) {
+            case "command_error":
+              fail({ code: "MODEL_COMMAND_REJECTED" });
+              break;
+            case "generation_started":
+              started.current = true;
+              setStatus("Waiting for the first living picture…");
+              break;
+            case "generation_complete":
+            case "generation_reset":
+              started.current = false;
+              setStatus("Ready for the next scene");
+              break;
+            case "generation_paused":
+              setStatus("Pictures paused");
+              break;
+            case "generation_resumed":
+              setStatus(
+                provider === "backup"
+                  ? "Live pictures · backup"
+                  : "Live pictures",
+              );
+              break;
+            case "chunk_complete":
+              if (
+                typeof message.frames_emitted === "number" &&
+                message.frames_emitted > 0
+              )
+                setStatus(
+                  provider === "backup"
+                    ? "Live pictures · backup"
+                    : "Live pictures",
+                );
+              break;
+            case "state":
+              if (typeof message.started === "boolean")
+                started.current = message.started;
+              break;
+          }
+        });
+        reactor.on("statusChanged", (state) => {
+          if (currentAttempt() && !establishing && state === "disconnected")
+            fail();
+        });
+
+        await reactor.connect(token.jwt, { sessionId: token.sessionId });
+        establishing = false;
+        signal.throwIfAborted();
         if (!currentSession()) return;
         const initialPrompt = pending.current;
         setStatus("Waiting for the first living picture…");
@@ -285,6 +255,33 @@ export function useOrbis(accessCode: string) {
     },
     [fail],
   );
+  useEffect(() => {
+    let checking = false;
+    const timer = window.setInterval(async () => {
+      const id = lease.current;
+      if (!id || checking) return;
+      checking = true;
+      try {
+        const result = await api<{ active: boolean }>(
+          "/api/reactor/session/heartbeat",
+          { leaseId: id },
+          accessCode,
+        );
+        if (lease.current === id && !result.active) {
+          stop();
+          setStatus("Video moved to the newer story");
+          setError(
+            "A newer story took over the live video. Reconnect here if you want this story to take over again.",
+          );
+        }
+      } catch {
+        /* The persistent server lease and runtime cap handle disconnects. */
+      } finally {
+        checking = false;
+      }
+    }, 20000);
+    return () => window.clearInterval(timer);
+  }, [accessCode, stop]);
   useEffect(() => {
     const hide = () => stop();
     window.addEventListener("pagehide", hide);
