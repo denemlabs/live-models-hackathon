@@ -46,7 +46,7 @@ Open **Grown-up settings** to allow live processing and select age, simpler lang
 1. Tap the microphone, say an idea, and tap again to send it (maximum 30 seconds). Typing is always available. This prototype uses turn-by-turn recording, not an always-on microphone.
 2. `/api/transcribe` handles an in-memory audio upload and asks OpenAI for the transcript.
 3. `/api/story` validates and moderates input, asks the Responses API for a structured page, and moderates that output before returning it. Requests use `store: false`.
-4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt` and `start` for the first scene, then changes `set_prompt` within the same stream on later turns. Prompts re-establish the characters and setting.
+4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks the acknowledgment, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
 5. The child can ask a question, choose a direction, request a gentler scene, or ask for a cozy ending. Previous pages remain available in memory. Narration, recording, and video can be paused; a new story releases the video session.
 
 Story text and visual generation are asynchronous. Reactor documents multi-minute cold starts and approximately 1.8-second prompt-update boundaries after startup. The interface shows connection progress and offers reconnection. There is no frame-accurate synchronization between narration and video yet.
@@ -77,3 +77,11 @@ Tests exercise demo continuity and calming reactions, invalid input, missing key
 - [OpenAI Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs)
 - [OpenAI speech transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
 - [Reactor Orbis Stable API](https://www.reactor.inc/models/visko-orbis-stable/api)
+
+## Organizer starter compatibility
+
+The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-starter) is the reference for our Orbis session lifecycle. Both projects use Reactor SDK 3.0.2 and `reactor/visko-orbis-stable`, with server-side, model-scoped, single-session token minting.
+
+Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Regression tests cover early/late readiness, rejected commands, timeout, and cancellation.
+
+The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from the browser. Live provider behavior still needs verification with real keys.
