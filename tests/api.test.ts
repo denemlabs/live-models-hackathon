@@ -435,3 +435,56 @@ test("backup token uses only the backup credential and rejects unknown providers
     globalThis.fetch = original;
   }
 });
+
+test("HTTP session creation retains ownership after the response closes normally", async () => {
+  const { mkdtemp, rm } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const directory = await mkdtemp(join(tmpdir(), "video-route-"));
+  const original = globalThis.fetch;
+  let count = 0;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).startsWith("https://api.reactor.inc")) {
+      if (String(input).endsWith("/tokens"))
+        return Response.json({ jwt: "fake-session-token" });
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (init?.method === "POST")
+        return Response.json({ session_id: `test-session-${++count}` });
+      return Response.json({ state: "CLOSED" });
+    }
+    return original(input, init);
+  };
+  try {
+    await withServer(
+      {
+        REACTOR_API_KEY: "fake-api-key",
+        VIDEO_SESSION_STORE: join(directory, "session.json"),
+      },
+      async (base) => {
+        const first = await (
+          await post(`${base}/api/reactor/session`, {})
+        ).json();
+        const second = await (
+          await post(`${base}/api/reactor/session`, {})
+        ).json();
+        await post(`${base}/api/reactor/session/release`, {
+          leaseId: first.leaseId,
+        });
+        assert.deepEqual(
+          await (
+            await post(`${base}/api/reactor/session/heartbeat`, {
+              leaseId: second.leaseId,
+            })
+          ).json(),
+          { active: true },
+        );
+        await post(`${base}/api/reactor/session/release`, {
+          leaseId: second.leaseId,
+        });
+      },
+    );
+  } finally {
+    globalThis.fetch = original;
+    await rm(directory, { recursive: true, force: true });
+  }
+});
