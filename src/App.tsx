@@ -707,6 +707,33 @@ export default function App() {
                           <button disabled={busy} onClick={reset}>
                             Start a new adventure <BookOpen size={15} />
                           </button>
+                        ) : page.choices.length === 0 ? (
+                          <div className="open-answer">
+                            <p>
+                              Your idea belongs in this story. Say it or type it
+                              below.
+                            </p>
+                            <button
+                              disabled={locked || mic.recording || micBusy}
+                              onClick={() => {
+                                setQuestionMode(false);
+                                document.getElementById("reaction")?.focus();
+                              }}
+                            >
+                              Share my idea <Sparkles size={15} />
+                            </button>
+                            <button
+                              disabled={locked || mic.recording || micBusy}
+                              onClick={() =>
+                                void tell(
+                                  "I’m not sure. Please give me a couple of ideas to choose from.",
+                                  "continue",
+                                )
+                              }
+                            >
+                              Give me ideas <CircleHelp size={15} />
+                            </button>
+                          </div>
                         ) : (
                           page.choices.slice(0, 2).map((choice) => (
                             <button
@@ -834,7 +861,9 @@ export default function App() {
                       ? "Listening… tap the mic when you’re done"
                       : questionMode
                         ? "Why does the moon shine?"
-                        : "“Can the fox have a friend?”"
+                        : page?.choices.length === 0
+                          ? "My idea is…"
+                          : "“Can the fox have a friend?”"
                   }
                   disabled={locked || mic.recording || micBusy}
                 />

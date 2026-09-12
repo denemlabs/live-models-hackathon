@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { PageSchema, ProfileSchema } from "./story";
+import {
+  ENGAGEMENT_INSTRUCTIONS,
+  engagementInstruction,
+  PageSchema,
+  ProfileSchema,
+} from "./story";
 
 export const SHOW_SCENE_TOOL = "show_scene";
 export const TURN_PAGE_TOOL = "turn_page";
@@ -16,6 +21,12 @@ export const PageArgsSchema = z.object({
 });
 export type SceneArgs = z.infer<typeof SceneArgsSchema>;
 export type PageArgs = z.infer<typeof PageArgsSchema>;
+
+export function pageChoices(args: PageArgs) {
+  return [args.choice_one, args.choice_two]
+    .map((choice) => choice.trim())
+    .filter(Boolean);
+}
 
 export const CallRequestSchema = z.object({
   profile: ProfileSchema,
@@ -75,11 +86,13 @@ export const storytellerTools = [
         },
         choice_one: {
           type: "string",
-          description: "The first short direction the story could take.",
+          description:
+            "First short answer to the question, or an empty string for an open-ended question.",
         },
         choice_two: {
           type: "string",
-          description: "The second short direction the story could take.",
+          description:
+            "Second distinct answer, or an empty string for an open-ended question.",
         },
       },
       required: ["title", "question", "choice_one", "choice_two"],
@@ -108,7 +121,10 @@ export function storytellerInstructions(request: CallRequest) {
   const recap = history.length
     ? `\n\nTHE STORY SO FAR\nThis is a continuing story titled "${history[0].title}". Pick it up exactly where it stopped; do not restart it or rename the characters.\n${history
         .slice(-4)
-        .map((page, index) => `${index + 1}. ${page.title}: ${page.narrative}`)
+        .map(
+          (page, index) =>
+            `${index + 1}. ${page.title}: ${page.narrative}\nQuestion: ${page.question}\nOptions: ${page.choices.join(" / ") || "open-ended"}`,
+        )
         .join("\n")}`
     : "";
   const seed = topic.trim()
@@ -124,6 +140,11 @@ Never tell two beats in a row. The child steers this story; you are only holding
 Let silence be comfortable. If the child says nothing for a while, offer one small gentle nudge, then wait again.
 If the child interrupts you, stop immediately and follow where they went.
 If the child is quiet or says very little, keep your beats even shorter and ask simpler questions.
+
+INVITING THE CHILD IN
+${ENGAGEMENT_INSTRUCTIONS}
+${engagementInstruction(history)}
+After that, alternate the kinds of questions across the conversation. Roughly one in every three normal story beats should have an open-ended question. For those beats send BOTH choice_one and choice_two as empty strings in ${TURN_PAGE_TOOL}; do not speak suggested answers either. Otherwise send two distinct short answers matching the question. Always wait for the child, and accept spoken or typed ideas even when choices are shown.
 
 YOUR TOOLS
 Call ${SHOW_SCENE_TOOL} whenever the story moves somewhere new, just before you describe it. Call it for the opening scene too.

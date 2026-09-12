@@ -234,6 +234,23 @@ function CallRoom({
               <h3>{page.title}</h3>
               <p>{page.narrative}</p>
               <div className="call-choices">
+                {page.choices.length === 0 && (
+                  <div className="open-answer">
+                    <p>
+                      Your turn. Tell the storyteller your idea, or type it
+                      below.
+                    </p>
+                    <button
+                      onClick={() =>
+                        call.sendUserMessage(
+                          "I’m not sure. Please give me a couple of ideas to choose from.",
+                        )
+                      }
+                    >
+                      Give me ideas <Sparkles size={14} />
+                    </button>
+                  </div>
+                )}
                 {page.choices.slice(0, 2).map((choice) => (
                   <button
                     key={choice}

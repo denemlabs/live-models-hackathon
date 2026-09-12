@@ -9,9 +9,75 @@ import {
   StoryRequestSchema,
   finalizePage,
   storyInstructions,
+  engagementPlan,
+  type StoryPage,
 } from "../shared/story";
 
 const profile = ProfileSchema.parse({});
+
+test("story questions vary across a long, capped history and accept open-ended answers", () => {
+  const history: StoryPage[] = [];
+  const questions = new Set<string>();
+  let openTurns = 0;
+  for (let i = 0; i < 18; i++) {
+    const request = StoryRequestSchema.parse({
+      input: i ? "A rainbow bubble bridge" : "A fox in the forest",
+      profile,
+      history: history.slice(-12),
+      interaction: "continue",
+      demo: true,
+    });
+    const page = demoPage(request);
+    assert.notEqual(page.questionStyle, history.at(-1)?.questionStyle);
+    assert.ok([0, 2].includes(page.choices.length));
+    assert.equal(
+      page.choices.length === 0,
+      engagementPlan(request.history).openEnded,
+    );
+    assert.equal(page.responseKind, "story");
+    assert.doesNotMatch(page.question, /what should .* do next/i);
+    questions.add(page.question);
+    if (!page.choices.length) openTurns++;
+    history.push(page);
+  }
+  assert.equal(questions.size, 6);
+  assert.equal(openTurns, 6);
+  const aside = {
+    ...history.at(-1)!,
+    responseKind: "answer" as const,
+    questionStyle: "invent" as const,
+  };
+  assert.deepEqual(
+    engagementPlan([...history, aside]),
+    engagementPlan(history),
+  );
+});
+
+test("demo API returns an open question then continues after the child's own answer", async () => {
+  await withServer({}, async (base) => {
+    const history: StoryPage[] = [];
+    for (const input of [
+      "A fox",
+      "Its warm glow",
+      "A tiny singing flower",
+      "A rainbow bubble bridge",
+    ]) {
+      const response = await post(`${base}/api/story`, {
+        input,
+        profile,
+        history,
+        demo: true,
+        interaction: "continue",
+      });
+      assert.equal(response.status, 200);
+      const { page } = await response.json();
+      history.push(page);
+    }
+    assert.deepEqual(history[2].choices, []);
+    assert.equal(history[3].choices.length, 2);
+    assert.equal(history[3].title, history[0].title);
+  });
+});
 async function withServer(
   env: NodeJS.ProcessEnv,
   run: (base: string) => Promise<void>,

@@ -6,6 +6,7 @@ import { createApp } from "../server/app";
 import { ProfileSchema } from "../shared/story";
 import {
   PageArgsSchema,
+  pageChoices,
   SceneArgsSchema,
   SHOW_SCENE_TOOL,
   storytellerGreeting,
@@ -16,6 +17,31 @@ import {
 
 const profile = ProfileSchema.parse({});
 const KEY = "test-elevenlabs-secret";
+
+test("voice pages support open-ended questions without blank choice buttons", () => {
+  const args = PageArgsSchema.parse({
+    title: "A little wonder",
+    question: "What would you invent?",
+    choice_one: "",
+    choice_two: "  ",
+  });
+  assert.deepEqual(pageChoices(args), []);
+  assert.deepEqual(
+    pageChoices({
+      ...args,
+      choice_one: " A bubble boat ",
+      choice_two: "A leaf raft",
+    }),
+    ["A bubble boat", "A leaf raft"],
+  );
+  const prompt = storytellerInstructions({
+    profile,
+    topic: "A fox",
+    history: [],
+  });
+  assert.match(prompt, /BOTH choice_one and choice_two as empty strings/);
+  assert.match(prompt, /Always wait for the child/);
+});
 
 async function withServer(
   env: NodeJS.ProcessEnv,

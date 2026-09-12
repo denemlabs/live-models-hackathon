@@ -722,6 +722,22 @@ footer button {
   font-size: 13px;
   line-height: 1.5;
 }
+.open-answer {
+  width: 100%;
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.open-answer p {
+  flex-basis: 100%;
+  margin: 0 0 4px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.open-answer button {
+  flex: 1 1 140px;
+}
 .choices {
   display: flex;
   flex-direction: column;

@@ -170,7 +170,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         model: env.OPENAI_STORY_MODEL || "gpt-4.1-mini",
         store: false,
         input: [
-          { role: "system", content: storyInstructions(data.profile) },
+          {
+            role: "system",
+            content: storyInstructions(data.profile, data.history),
+          },
           {
             role: "user",
             content: JSON.stringify({
@@ -186,7 +189,11 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         max_output_tokens: 1400,
       });
       const page = response.output_parsed;
-      if (!page || page.choices.length !== 2) {
+      if (
+        !page ||
+        ![0, 2].includes(page.choices.length) ||
+        page.choices.some((choice) => !choice.trim())
+      ) {
         res.status(422).json({
           error: "That page needs a little more magic. Try a different idea.",
         });

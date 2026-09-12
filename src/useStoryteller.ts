@@ -3,6 +3,7 @@ import { useConversation, useConversationClientTool } from "@elevenlabs/react";
 import type { Profile, StoryPage } from "../shared/story";
 import {
   PageArgsSchema,
+  pageChoices,
   SceneArgsSchema,
   SHOW_SCENE_TOOL,
   TURN_PAGE_TOOL,
@@ -54,7 +55,7 @@ export function useStoryteller(options: {
         title: args.title,
         narrative,
         question: args.question,
-        choices: [args.choice_one, args.choice_two],
+        choices: pageChoices(args),
         visualPrompt: scene.current?.visual_prompt ?? "",
         theme: scene.current?.theme ?? "forest",
       });
