@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   checkedCommand,
   ORBIS_TRACKS,
+  orbisFailure,
   modelMessage,
   startOrbisRun,
   type OrbisTransport,
@@ -176,4 +177,16 @@ test("empty acknowledgments cannot report success without confirmation or after 
   fake.emit({ type: "generation_started" });
   await rejection;
   assert.equal(fake.listeners.size, 0);
+});
+
+test("account session limits are actionable and never expose provider error bodies", () => {
+  const failure = orbisFailure({
+    code: "RATE_LIMITED",
+    message: "private token and prompt details",
+  });
+  assert.equal(failure.status, "Video session limit reached");
+  assert.match(failure.message, /Close unused Reactor sessions or wait/);
+  assert.match(failure.message, /illustration/);
+  assert.ok(!JSON.stringify(failure).includes("private token"));
+  assert.equal(orbisFailure({ code: "private token" }).code, "SESSION_ERROR");
 });

@@ -114,3 +114,27 @@ export async function startOrbisRun(
     signal.removeEventListener("abort", cancel);
   }
 }
+
+export function orbisFailure(cause: unknown) {
+  const rawCode =
+    cause && typeof cause === "object"
+      ? (cause as { code?: unknown }).code
+      : undefined;
+  const code =
+    typeof rawCode === "string" && /^[A-Z_]{1,50}$/.test(rawCode)
+      ? rawCode
+      : "SESSION_ERROR";
+  return code === "RATE_LIMITED"
+    ? {
+        code,
+        status: "Video session limit reached",
+        message:
+          "Reactor is limiting new video sessions for this account. Close unused Reactor sessions or wait, then reconnect. This picture is an illustration; your story is still available.",
+      }
+    : {
+        code,
+        status: "Video disconnected — illustration",
+        message:
+          "Live video couldn’t connect. The picture shown is an illustration. You can keep reading or reconnect.",
+      };
+}

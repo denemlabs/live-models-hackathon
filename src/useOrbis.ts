@@ -4,6 +4,7 @@ import { api } from "./api";
 import {
   checkedCommand,
   ORBIS_TRACKS,
+  orbisFailure,
   modelMessage,
   startOrbisRun,
   type OrbisTransport,
@@ -47,22 +48,12 @@ export function useOrbis(accessCode: string) {
   }, []);
   const fail = useCallback(
     (cause?: unknown) => {
-      // Retain a diagnostic code without logging prompts, tokens, or provider bodies.
-      const code =
-        cause && typeof cause === "object"
-          ? (cause as { code?: unknown }).code
-          : undefined;
-      console.warn(
-        "Orbis connection failed",
-        typeof code === "string" && /^[A-Z_]{1,50}$/.test(code)
-          ? code
-          : "SESSION_ERROR",
-      );
+      const failure = orbisFailure(cause);
+      // Never log prompts, tokens, or raw provider bodies.
+      console.warn("Orbis connection failed", failure.code);
       stop();
-      setError(
-        "Live pictures couldn’t connect. You can keep reading or reconnect.",
-      );
-      setStatus("Pictures disconnected");
+      setError(failure.message);
+      setStatus(failure.status);
     },
     [stop],
   );
