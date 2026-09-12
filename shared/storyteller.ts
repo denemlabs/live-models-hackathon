@@ -28,6 +28,22 @@ export function pageChoices(args: PageArgs) {
     .filter(Boolean);
 }
 
+export type TranscriptMerge = "append" | "replace" | "skip";
+
+// A spoken turn can reach the browser as a growing partial followed by its
+// final correction, and an agent whose tool call interrupted its turn can
+// repeat a line outright. Left alone both land twice, once in the captions and
+// once again in the narrative written into the storybook.
+export function mergeTranscript(
+  previous: string | undefined,
+  next: string,
+): TranscriptMerge {
+  if (!previous) return "append";
+  if (previous === next || previous.startsWith(next)) return "skip";
+  if (next.startsWith(previous)) return "replace";
+  return "append";
+}
+
 export const CallRequestSchema = z.object({
   profile: ProfileSchema,
   topic: z.string().max(1000).default(""),

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useConversation, useConversationClientTool } from "@elevenlabs/react";
 import type { Profile, StoryPage } from "../shared/story";
 import {
+  mergeTranscript,
   PageArgsSchema,
   pageChoices,
   SceneArgsSchema,
@@ -34,7 +35,9 @@ export function useStoryteller(options: {
   const { accessCode, profile, topic, history, onScene, onPage } = options;
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState("");
-  const [captions, setCaptions] = useState<Caption[]>([]);
+  // Captions read like the rolling subtitles on a television, so only the line
+  // being spoken right now is ever on screen.
+  const [caption, setCaption] = useState<Caption | null>(null);
   const spoken = useRef<string[]>([]);
   const pendingPage = useRef<PageArgs | null>(null);
   const scene = useRef<SceneArgs | null>(null);
@@ -68,12 +71,24 @@ export function useStoryteller(options: {
       if (!text) return;
       const who: Caption["who"] = source === "ai" ? "storyteller" : "child";
       if (who === "storyteller") {
-        spoken.current.push(text);
+        const merge = mergeTranscript(spoken.current.at(-1), text);
+        if (merge === "replace")
+          spoken.current[spoken.current.length - 1] = text;
+        else if (merge === "append") spoken.current.push(text);
         settlePage();
       }
-      setCaptions((prev) =>
-        [...prev, { id: ++captionId.current, who, text }].slice(-8),
-      );
+      setCaption((prev) => {
+        const merge =
+          prev?.who === who ? mergeTranscript(prev.text, text) : "append";
+        if (merge === "skip") return prev;
+        // A growing partial keeps its id so the line flows on instead of
+        // restarting the roll-up mid-sentence.
+        return {
+          id: merge === "replace" && prev ? prev.id : ++captionId.current,
+          who,
+          text,
+        };
+      });
     },
     onError: () =>
       setError(
@@ -97,7 +112,7 @@ export function useStoryteller(options: {
   const { startSession, endSession } = conversation;
   const start = useCallback(async () => {
     setError("");
-    setCaptions([]);
+    setCaption(null);
     setConnecting(true);
     spoken.current = [];
     pendingPage.current = null;
@@ -150,7 +165,7 @@ export function useStoryteller(options: {
     hangUp,
     connecting,
     error,
-    captions,
+    caption,
     status: conversation.status,
     isSpeaking: conversation.isSpeaking,
     isMuted: conversation.isMuted,

@@ -1648,33 +1648,46 @@ dialog::backdrop {
   border-radius: 12px;
   padding: 4px 9px;
 }
-.call-captions {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+/* One rolling caption band, like the closed captions on a television. The
+   storyteller is bold and the child is italic, so nobody needs a name label. */
+.call-cc {
+  width: 100%;
   margin-top: 14px;
+  padding: 11px 18px;
+  max-height: calc(3em * 1.55 + 22px);
+  overflow: hidden;
+  background: #0b1210c2;
+  border: 1px solid #ffffff1a;
+  border-radius: 13px;
+  backdrop-filter: blur(6px);
 }
-.call-captions p {
+.call-cc p {
   margin: 0;
   font-size: 15px;
   line-height: 1.55;
-  background: #ffffff0d;
-  border: 1px solid #ffffff14;
-  border-radius: 13px;
-  padding: 10px 15px;
+  text-align: center;
+  text-wrap: balance;
+  color: #eef1e6;
+  animation: cc-roll 0.32s ease-out;
 }
-.call-captions p span {
-  display: block;
-  font-size: 9px;
-  font-weight: 650;
-  letter-spacing: 1.7px;
-  text-transform: uppercase;
-  opacity: 0.5;
-  margin-bottom: 3px;
+.call-cc p.storyteller {
+  font-weight: 700;
+  font-style: normal;
 }
-.call-captions p.child {
-  background: #e5c0871f;
-  border-color: #e5c08736;
+.call-cc p.child {
+  font-weight: 400;
+  font-style: italic;
+  color: #ecd3a8;
+}
+@keyframes cc-roll {
+  from {
+    opacity: 0;
+    transform: translateY(1.1em);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 .call-lobby {
   width: 100%;

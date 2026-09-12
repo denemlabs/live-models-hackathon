@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { createApp } from "../server/app";
 import { ProfileSchema } from "../shared/story";
 import {
+  mergeTranscript,
   PageArgsSchema,
   pageChoices,
   SceneArgsSchema,
@@ -14,6 +15,7 @@ import {
   storytellerTools,
   TURN_PAGE_TOOL,
 } from "../shared/storyteller";
+import { STORY_VOICES, voiceId } from "../shared/voices";
 
 const profile = ProfileSchema.parse({});
 const KEY = "test-elevenlabs-secret";
@@ -42,6 +44,35 @@ test("voice pages support open-ended questions without blank choice buttons", ()
   });
   assert.match(prompt, /BOTH choice_one and choice_two as empty strings/);
   assert.match(prompt, /Always wait for the child/);
+});
+
+// The screenshot that prompted this: one storyteller beat captioned twice, and
+// the same sentence written into the storybook page twice with it.
+test("a repeated or growing storyteller turn is only captioned once", () => {
+  const beat = "Faelan spots a patch of bright red berries under a leafy bush.";
+  assert.equal(mergeTranscript(undefined, beat), "append");
+  assert.equal(mergeTranscript(beat, beat), "skip");
+  assert.equal(mergeTranscript(beat, "Faelan spots a patch"), "skip");
+  assert.equal(mergeTranscript("Faelan spots a patch", beat), "replace");
+  assert.equal(
+    mergeTranscript(beat, "Are they high up, or low to the ground?"),
+    "append",
+  );
+
+  // A turn arriving as partials followed by a repeat leaves one clean line.
+  const spoken: string[] = [];
+  for (const message of [
+    "Faelan spots",
+    "Faelan spots a patch",
+    beat,
+    beat,
+    "Are they high up, or low to the ground?",
+  ]) {
+    const merge = mergeTranscript(spoken.at(-1), message);
+    if (merge === "replace") spoken[spoken.length - 1] = message;
+    else if (merge === "append") spoken.push(message);
+  }
+  assert.deepEqual(spoken, [beat, "Are they high up, or low to the ground?"]);
 });
 
 async function withServer(
@@ -166,6 +197,35 @@ test("a story call provisions one storyteller agent, reuses it, and never leaks 
         .agent.prompt.prompt,
       true,
       "the session prompt must be overridable for the profile to matter",
+    );
+  } finally {
+    eleven.restore();
+  }
+});
+
+test("a story call is spoken in the voice a grown-up picked", async () => {
+  const eleven = mockElevenLabs({ pinnedAllowsOverrides: true });
+  try {
+    await withServer(
+      {
+        ELEVENLABS_API_KEY: KEY,
+        ELEVENLABS_AGENT_ID: "agent_pinned",
+        ELEVENLABS_VOICE_ID: "deployment-default",
+      },
+      async (base) => {
+        for (const voice of STORY_VOICES) {
+          const { overrides } = await (
+            await post(`${base}/api/storyteller/token`, {
+              profile: { ...profile, voice: voice.key },
+            })
+          ).json();
+          assert.equal(
+            overrides.tts.voiceId,
+            voiceId(voice.key),
+            `${voice.label} must speak on the call, not the deployment default`,
+          );
+        }
+      },
     );
   } finally {
     eleven.restore();

@@ -65,6 +65,7 @@ function CallRoom({
   const [seconds, setSeconds] = useState(0);
   const video = useRef<HTMLVideoElement>(null);
   const orb = useRef<HTMLDivElement>(null);
+  const captionBox = useRef<HTMLDivElement>(null);
 
   const call = useStoryteller({
     accessCode,
@@ -82,10 +83,17 @@ function CallRoom({
   });
   const live = call.status === "connected";
   const page = pages.at(-1);
+  const caption = call.caption;
 
   useEffect(() => {
     if (video.current) video.current.srcObject = stream;
   }, [stream]);
+  // A long turn overflows the caption band, so keep the newest words in view
+  // the way broadcast captions roll upward.
+  useEffect(() => {
+    const box = captionBox.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [caption?.id, caption?.text, showCaptions]);
   useEffect(() => {
     if (!live) return setSeconds(0);
     const tick = setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -172,21 +180,16 @@ function CallRoom({
         </div>
 
         {live && showCaptions && (
-          <div className="call-captions" aria-live="polite">
-            {call.captions.length ? (
-              call.captions.slice(-3).map((caption) => (
-                <p key={caption.id} className={caption.who}>
-                  <span>
-                    {caption.who === "storyteller" ? "Storyteller" : "You"}
-                  </span>
-                  {caption.text}
-                </p>
-              ))
-            ) : (
-              <p className="storyteller">
-                <span>Storyteller</span>Say hello whenever you’re ready.
-              </p>
-            )}
+          <div className="call-cc" ref={captionBox} aria-live="polite">
+            <p
+              key={caption?.id ?? "waiting"}
+              className={caption?.who ?? "storyteller"}
+            >
+              <span className="sr-only">
+                {caption?.who === "child" ? "You said: " : "Storyteller: "}
+              </span>
+              {caption?.text ?? "Say hello whenever you’re ready."}
+            </p>
           </div>
         )}
       </div>
