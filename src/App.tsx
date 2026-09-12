@@ -38,6 +38,8 @@ import type { SceneArgs } from "../shared/storyteller";
 import { pageNarration, spokenChoice } from "../shared/storyInteraction";
 import VideoStage, { useMediaQuery } from "./VideoStage";
 import StoryCaption from "./StoryCaption";
+import StoryOptions from "./StoryOptions";
+import StoryNotice from "./StoryNotice";
 import PreviewSwitcher from "./PreviewSwitcher";
 import {
   abortablePreviewDelay,
@@ -111,6 +113,7 @@ export default function App({
   const [liveReady, setLiveReady] = useState(false);
   const [typing, setTyping] = useState(false);
   const [fullText, setFullText] = useState(false);
+  const [optionsOpen, setOptionsOpen] = useState(false);
   const [sound, setSound] = useState(!designPreview);
   const [handsFree, setHandsFree] = useState(false);
   const previousCompletion = useRef(0);
@@ -208,6 +211,7 @@ export default function App({
     setError("");
     setBusy(true);
     setTyping(false);
+    setOptionsOpen(false);
     if (designPreview) setPreviewStage(pages.length ? "adapting" : "preparing");
     setLastWords(originalWords);
     const first = !pages.length;
@@ -412,6 +416,7 @@ export default function App({
   }, [page, busy, paused, speaking, mic.recording, micBusy, settings, help]);
   function askQuestion() {
     mute();
+    setOptionsOpen(false);
     setQuestionMode(true);
     setInput("");
     setTyping(true);
@@ -445,6 +450,7 @@ export default function App({
     setLastWords("");
     setFullText(false);
     setTyping(false);
+    setOptionsOpen(false);
     if (designPreview) setPreviewStage("story");
   }
   function showPreview(stage: PreviewStage) {
@@ -460,11 +466,13 @@ export default function App({
     setPaused(false);
     setTyping(false);
     setFullText(false);
+    setOptionsOpen(false);
     setError("");
     setLastWords(stage === "gentler" ? "Make the story gentler." : "");
   }
   function flip(index: number) {
     mute();
+    setOptionsOpen(false);
     setAside(null);
     setQuestionMode(false);
     setConversation([]);
@@ -578,9 +586,11 @@ export default function App({
                   ? "Live · Orbis"
                   : demo && inStory
                     ? "Sample story · preview scene"
-                    : welcomeMedia.intro
-                      ? "Welcome to your imagination"
-                      : "Preview scene";
+                    : inStory
+                      ? "Saved background"
+                      : welcomeMedia.intro
+                        ? "Welcome to your imagination"
+                        : "Preview scene";
   const toggleSound = () => {
     setSound(!sound);
     if (sound) mute();
@@ -760,6 +770,7 @@ export default function App({
               connecting ||
               listening ||
               mic.transcribing) &&
+              !(error || orbis.error || previewError) &&
               page && (
                 <div className="story-feedback float-surface" role="status">
                   {listening ? (
@@ -768,13 +779,13 @@ export default function App({
                     <LoaderCircle className="spin" size={15} />
                   )}
                   {listening
-                    ? "Your idea can change this world…"
+                    ? "Listening…"
                     : connecting
-                      ? "Opening your world. The voice will wait for the first live picture…"
+                      ? "Opening live video…"
                       : mic.transcribing ||
                           (previewStage === "transcribing" && designPreview)
-                        ? "Turning a little voice into words…"
-                        : "We’re making room for your idea…"}
+                        ? "Transcribing…"
+                        : "Updating your story…"}
                 </div>
               )}
             {page && lastWords && !typing && !designPreview && (
@@ -818,6 +829,7 @@ export default function App({
                   listening ||
                   typing ||
                   fullText ||
+                  optionsOpen ||
                   settings ||
                   help
                 }
@@ -894,11 +906,11 @@ export default function App({
               </div>
             )}
             {page && !typing && (
-              <p className="story-question">{(aside || page).question}</p>
-            )}
-            {page && !typing && (
-              <div className="immersive-choices" aria-label="Story choices">
-                {storyActions}
+              <div className="visible-story-choices">
+                <p className="story-question">{(aside || page).question}</p>
+                <div className="immersive-choices" aria-label="Story choices">
+                  {storyActions}
+                </div>
               </div>
             )}
             {ending && !typing ? (
@@ -956,24 +968,13 @@ export default function App({
                       ref={typeButtonRef}
                       className="type-instead"
                       disabled={locked || mic.recording || micBusy}
-                      onClick={() => setTyping(true)}
+                      onClick={() => {
+                        setOptionsOpen(false);
+                        setTyping(true);
+                      }}
                     >
                       Type instead <ArrowRight size={14} />
                     </button>
-                    {!demo && (
-                      <button
-                        className="hands-free"
-                        aria-pressed={handsFree}
-                        disabled={locked || micBusy}
-                        onClick={() => {
-                          setHandsFree(!handsFree);
-                          if (handsFree) mic.cancel();
-                          else if (!speaking && !mic.recording) toggleMic();
-                        }}
-                      >
-                        Hands-free answers {handsFree ? "on" : "off"}
-                      </button>
-                    )}
                   </>
                 ) : (
                   <>
@@ -1032,71 +1033,91 @@ export default function App({
                   </>
                 )}
                 {page && !typing && (
-                  <div
-                    className="floating-reactions"
-                    aria-label="Story reactions"
+                  <StoryOptions
+                    open={optionsOpen}
+                    onOpenChange={setOptionsOpen}
+                    disabled={busy || micBusy || mic.recording || simulating}
                   >
-                    <button
-                      disabled={locked || micBusy || mic.recording}
-                      onClick={askQuestion}
+                    <div
+                      className="floating-reactions"
+                      aria-label="Story reactions"
                     >
-                      <CircleHelp size={14} /> Ask a question
-                    </button>
-                    <button
-                      disabled={locked || mic.recording || micBusy}
-                      onClick={() =>
-                        void tell(
-                          "That feels scary. Make the story gentler and reassuring.",
-                          "calm",
-                        )
-                      }
-                    >
-                      <Leaf size={14} /> Gentler
-                    </button>
-                    <button
-                      disabled={locked || mic.recording || micBusy}
-                      onClick={() =>
-                        void tell(
-                          "I love this! Let’s have a little more adventure.",
-                          "continue",
-                        )
-                      }
-                    >
-                      <Sparkles size={14} /> More wonder
-                    </button>
-                    <button
-                      disabled={locked || mic.recording || micBusy}
-                      onClick={() =>
-                        void tell(
-                          "Let’s give this story a cozy, happy ending.",
-                          "ending",
-                        )
-                      }
-                    >
-                      <Moon size={14} /> Cozy ending
-                    </button>
-                  </div>
-                )}
-                {page && !typing && (quietHelp || replays >= 2) && (
-                  <div className="floating-reactions">
-                    <button
-                      disabled={locked || micBusy || mic.recording}
-                      onClick={replay}
-                    >
-                      Hear it again
-                    </button>
-                    <button
-                      disabled={locked || micBusy || mic.recording}
-                      onClick={() =>
-                        void tell(
-                          "Please explain this page in simpler words.",
-                          "simplify",
-                        )
-                      }
-                    >
-                      Simpler words
-                    </button>
-                  </div>
+                      <button
+                        disabled={locked || micBusy || mic.recording}
+                        onClick={askQuestion}
+                      >
+                        <CircleHelp size={14} /> Ask a question
+                      </button>
+                      <button
+                        disabled={locked || mic.recording || micBusy}
+                        onClick={() =>
+                          void tell(
+                            "That feels scary. Make the story gentler and reassuring.",
+                            "calm",
+                          )
+                        }
+                      >
+                        <Leaf size={14} /> Gentler
+                      </button>
+                      <button
+                        disabled={locked || mic.recording || micBusy}
+                        onClick={() =>
+                          void tell(
+                            "I love this! Let’s have a little more adventure.",
+                            "continue",
+                          )
+                        }
+                      >
+                        <Sparkles size={14} /> More wonder
+                      </button>
+                      <button
+                        disabled={locked || mic.recording || micBusy}
+                        onClick={() =>
+                          void tell(
+                            "Let’s give this story a cozy, happy ending.",
+                            "ending",
+                          )
+                        }
+                      >
+                        <Moon size={14} /> Cozy ending
+                      </button>
+                    </div>
+                    {!demo && (
+                      <button
+                        className="hands-free"
+                        aria-pressed={handsFree}
+                        disabled={locked || micBusy}
+                        onClick={() => {
+                          setHandsFree(!handsFree);
+                          if (handsFree) mic.cancel();
+                          else if (!speaking && !mic.recording) toggleMic();
+                        }}
+                      >
+                        Hands-free answers {handsFree ? "on" : "off"}
+                      </button>
+                    )}
+                    {(quietHelp || replays >= 2) && (
+                      <div className="floating-reactions">
+                        <button
+                          disabled={locked || micBusy || mic.recording}
+                          onClick={replay}
+                        >
+                          Hear it again
+                        </button>
+                        <button
+                          disabled={locked || micBusy || mic.recording}
+                          onClick={() =>
+                            void tell(
+                              "Please explain this page in simpler words.",
+                              "simplify",
+                            )
+                          }
+                        >
+                          Simpler words
+                        </button>
+                      </div>
+                    )}
+                  </StoryOptions>
                 )}
               </section>
             ) : null}
@@ -1107,33 +1128,30 @@ export default function App({
               </p>
             )}
             {(error || orbis.error || previewError) && (
-              <div className="floating-error" role="alert">
-                <span>{error || orbis.error || previewError}</span>
-                {previewError ? (
-                  <button onClick={() => showPreview("story")}>
-                    Retry preview
-                  </button>
-                ) : /narration|storyteller’s voice/i.test(error) && page ? (
-                  <button onClick={replay}>Retry narration</button>
-                ) : orbis.error && !error ? (
-                  <button
-                    disabled={paused}
-                    onClick={() => {
-                      orbis.stop();
-                      if (page) void orbis.steer(page.visualPrompt);
-                    }}
-                  >
-                    Retry live video
-                  </button>
-                ) : (
-                  <button
-                    aria-label="Dismiss message"
-                    onClick={() => setError("")}
-                  >
-                    <X size={16} />
-                  </button>
-                )}
-              </div>
+              <StoryNotice
+                key={error || orbis.error || previewError}
+                message={error || orbis.error || previewError}
+                video={!!(orbis.error || previewError) && !error}
+                paused={paused}
+                retryLabel={
+                  /narration|storyteller’s voice/i.test(error) && page
+                    ? "Retry narration"
+                    : undefined
+                }
+                onRetry={
+                  previewError
+                    ? () => showPreview("story")
+                    : /narration|storyteller’s voice/i.test(error) && page
+                      ? replay
+                      : orbis.error && !error
+                        ? () => {
+                            orbis.stop();
+                            if (page) void orbis.steer(page.visualPrompt);
+                          }
+                        : undefined
+                }
+                onDismiss={error ? () => setError("") : undefined}
+              />
             )}
           </div>
         </main>

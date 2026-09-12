@@ -33,6 +33,7 @@ No merge to main, pull request, permanent deployment, or live-provider activatio
 
 ## Review documents
 
+- [Compact reading controls after integration](compact-story-controls.md)
 - [Current immersive experience and welcome media](immersive-experience.md)
 - [Story-stage and subtitle preview](story-stage-preview.md)
 
