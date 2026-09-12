@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { playWhenReady } from "./pictureGate";
 
 type Options = {
   elevenlabs: boolean;
@@ -6,6 +7,7 @@ type Options = {
   accessCode: string;
   youngReader: boolean;
   onError: (message: string) => void;
+  waitForPicture: () => Promise<boolean>;
 };
 
 export function useNarration(options: Options) {
@@ -54,29 +56,37 @@ export function useNarration(options: Options) {
     mute();
     if (automatic && !latest.current.enabled) return;
     const current = generation.current;
+    const picture = latest.current.waitForPicture();
     const finish = () => {
       if (current !== generation.current) return;
       mute();
     };
     let fallbackStarted = false;
-    const browserVoice = () => {
+    const browserVoice = async () => {
       if (current !== generation.current || fallbackStarted) return;
       fallbackStarted = true;
       release();
-      if (!window.speechSynthesis) {
-        setSpeaking(false);
-        latest.current.onError(
-          "Read aloud is unavailable. The story is always shown as text.",
-        );
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "en-US";
-      utterance.rate = latest.current.youngReader ? 0.8 : 0.9;
-      utterance.pitch = 1.05;
-      utterance.onend = finish;
-      utterance.onerror = finish;
-      window.speechSynthesis.speak(utterance);
+      await playWhenReady(
+        picture,
+        () => current === generation.current,
+        () => {
+          if (!window.speechSynthesis) {
+            setSpeaking(false);
+            latest.current.onError(
+              "Read aloud is unavailable. The story is always shown as text.",
+            );
+            return;
+          }
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = "en-US";
+          utterance.rate = latest.current.youngReader ? 0.8 : 0.9;
+          utterance.pitch = 1.05;
+          utterance.onend = finish;
+          utterance.onerror = finish;
+          window.speechSynthesis.speak(utterance);
+        },
+      );
+      if (!(await picture)) finish();
     };
     setSpeaking(true); // Stop also cancels audio that is still being prepared.
     if (!latest.current.elevenlabs) {
@@ -114,7 +124,12 @@ export function useNarration(options: Options) {
         );
         browserVoice();
       };
-      await player.play();
+      await playWhenReady(
+        picture,
+        () => current === generation.current,
+        () => player.play(),
+      );
+      if (!(await picture)) finish();
     } catch {
       if (current !== generation.current) return;
       latest.current.onError(

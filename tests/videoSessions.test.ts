@@ -121,12 +121,7 @@ test("an occupied untracked primary falls back to the separate backup account", 
     );
     const result = await manager.open();
     assert.equal(result.provider, "backup");
-    assert.deepEqual(calls, [
-      "Bearer primary-jwt",
-      "Bearer primary-jwt",
-      "Bearer primary-jwt",
-      "Bearer backup-jwt",
-    ]);
+    assert.deepEqual(calls, ["Bearer primary-jwt", "Bearer backup-jwt"]);
   }));
 
 test("replacement waits for terminal state after the delete acknowledgement", async () =>
@@ -146,4 +141,40 @@ test("replacement waits for terminal state after the delete acknowledgement", as
     await manager.open();
     await manager.open();
     assert.equal(polls, 2);
+  }));
+
+test("replacement reuses the last working backup without retrying the busy primary", async () =>
+  fixture(async (file) => {
+    const tokenKeys: string[] = [];
+    let count = 0;
+    const request: typeof fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const headers = init!.headers as Record<string, string>;
+      if (path === "/tokens") {
+        tokenKeys.push(headers["Reactor-API-Key"]);
+        return Response.json({ jwt: headers["Reactor-API-Key"] });
+      }
+      if (init?.method === "DELETE") return new Response(null, { status: 204 });
+      if (path.startsWith("/sessions/"))
+        return Response.json({ state: "CLOSED" });
+      if (headers.Authorization === "Bearer primary-test-secret")
+        return new Response(null, { status: 429 });
+      return Response.json({ session_id: `backup-${++count}` });
+    };
+    const configured = { ...env, REACTOR_API_KEY_BACKUP: "backup-test-secret" };
+    const manager = new VideoSessions(configured, file, request);
+    const first = await manager.open();
+    // Also exercise restart recovery from the persisted active provider.
+    const restarted = new VideoSessions(configured, file, request);
+    const second = await restarted.open();
+    assert.equal(second.provider, "backup");
+    assert.equal(await restarted.heartbeat(first.leaseId), false);
+    await restarted.release(second.leaseId);
+    await restarted.open();
+    assert.deepEqual(tokenKeys, [
+      "primary-test-secret",
+      "backup-test-secret",
+      "backup-test-secret",
+      "backup-test-secret",
+    ]);
   }));

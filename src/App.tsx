@@ -36,6 +36,7 @@ import { api } from "./api";
 import { useOrbis } from "./useOrbis";
 import { useMicrophone } from "./useMicrophone";
 import { useNarration } from "./useNarration";
+import { usePictureFrame } from "./usePictureFrame";
 
 // The ElevenLabs WebRTC client is only needed once a child places a call.
 const StoryCall = lazy(() => import("./StoryCall"));
@@ -114,6 +115,8 @@ export default function App() {
     accessCode,
     youngReader: profile.age === "3–5",
     onError: setError,
+    waitForPicture: () =>
+      !demo && config?.reactor ? orbis.waitForPicture() : Promise.resolve(true),
   });
 
   useEffect(() => {
@@ -135,6 +138,10 @@ export default function App() {
   useEffect(() => {
     if (video.current) video.current.srcObject = orbis.stream;
   }, [orbis.stream, inStory]);
+  usePictureFrame(video, orbis.stream, orbis.pictureReady);
+  useEffect(() => {
+    if (orbis.error) mute();
+  }, [orbis.error, mute]);
   useEffect(() => {
     if (video.current && orbis.stream) {
       if (paused) video.current.pause();
@@ -336,9 +343,9 @@ export default function App() {
     setConversation([]);
     setReplays(0);
     setPageIndex(index);
-    if (profile.readAloud) void read(pages[index].narrative, true);
     if (!demo && config?.reactor && !paused)
       void orbis.steer(pages[index].visualPrompt);
+    if (profile.readAloud) void read(pages[index].narrative, true);
   }
   async function togglePause() {
     const value = !paused;
@@ -377,6 +384,13 @@ export default function App() {
     setSelectedTheme(scene.theme);
     if (config?.reactor && scene.visual_prompt)
       void orbis.steer(scene.visual_prompt);
+  }
+  async function prepareCallPictures() {
+    if (!config?.reactor) return true;
+    return !!(await orbis.steer(
+      page?.visualPrompt ||
+        "A softly glowing open storybook in a peaceful watercolor forest clearing, warm light, slow gentle movement, no written text.",
+    ));
   }
   function callPage(page: StoryPage) {
     setPages((prev) => [...prev, page]);
@@ -960,12 +974,14 @@ export default function App() {
             {!demo &&
               !paused &&
               config?.reactor &&
-              !orbis.stream &&
+              !orbis.ready &&
               !orbis.error &&
               page && (
-                <p className="working-note">
-                  Live pictures can take a few minutes to wake up. Your story is
-                  ready to read.
+                <p className="working-note" role="status">
+                  Preparing live pictures.{" "}
+                  {profile.readAloud
+                    ? "The voice will begin when the first picture is ready."
+                    : "Your story is ready to read while you wait."}
                 </p>
               )}
             {orbis.error && (
@@ -1016,6 +1032,9 @@ export default function App() {
             history={pages}
             stream={orbis.stream}
             pictureStatus={orbis.status}
+            pictureError={orbis.error}
+            onPictureReady={orbis.pictureReady}
+            preparePictures={prepareCallPictures}
             livePictures={!!config?.reactor}
             onScene={callScene}
             onPage={callPage}

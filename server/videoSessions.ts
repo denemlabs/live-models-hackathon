@@ -32,6 +32,7 @@ const headers = (jwt: string) => ({
 export class VideoSessions {
   private active: VideoLease | null = null;
   private loaded = false;
+  private preferred: VideoLease["provider"] | null = null;
   private queue: Promise<unknown> = Promise.resolve();
   constructor(
     private env: NodeJS.ProcessEnv,
@@ -51,6 +52,7 @@ export class VideoSessions {
     if (this.loaded) return;
     try {
       this.active = JSON.parse(await readFile(this.file, "utf8"));
+      this.preferred = this.active?.provider ?? null;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
@@ -116,10 +118,14 @@ export class VideoSessions {
   }
   open() {
     return this.serial(async () => {
-      const previousProvider = this.active?.provider;
+      const previousProvider = this.active?.provider ?? this.preferred;
       await this.end();
       const model = this.env.REACTOR_MODEL || "reactor/visko-orbis-stable";
-      for (const provider of ["primary", "backup"] as const) {
+      const providers: VideoLease["provider"][] =
+        previousProvider === "backup"
+          ? ["backup", "primary"]
+          : ["primary", "backup"];
+      for (const provider of providers) {
         const key =
           provider === "primary"
             ? this.env.REACTOR_API_KEY
@@ -156,7 +162,7 @@ export class VideoSessions {
             "The video account did not return a session token.",
           );
         // A just-terminated GPU session may take a moment to release its quota.
-        const attempts = provider === previousProvider ? 10 : 3;
+        const attempts = provider === previousProvider ? 10 : 1;
         for (let attempt = 0; attempt < attempts; attempt++) {
           const response = await this.request(`${API}/sessions`, {
             method: "POST",
@@ -201,6 +207,7 @@ export class VideoSessions {
             lastSeen: this.now(),
             expiresAt: this.now() + 1800_000,
           };
+          this.preferred = provider;
           try {
             await this.save();
           } catch (e) {

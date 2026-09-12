@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Reactor } from "@reactor-team/js-sdk";
 import { api } from "./api";
+import { PictureGate } from "./pictureGate";
 import {
   checkedCommand,
   ORBIS_TRACKS,
@@ -30,10 +31,28 @@ export function useOrbis(accessCode: string) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState("Illustrated preview");
   const [error, setError] = useState("");
+  const [ready, setReady] = useState(false);
   const commandQueue = useRef(Promise.resolve());
   const teardown = useRef(Promise.resolve());
   const lease = useRef<string | null>(null);
+  const pictures = useRef(new PictureGate());
+  const currentStream = useRef<MediaStream | null>(null);
+  const frameTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const waitForPicture = useCallback(() => pictures.current.wait(), []);
+  const pictureReady = useCallback((media: MediaStream) => {
+    if (currentStream.current !== media) return;
+    clearTimeout(frameTimeout.current);
+    pictures.current.ready();
+    setReady(true);
+    setStatus("Live pictures");
+  }, []);
   const stop = useCallback(() => {
+    pictures.current.cancel();
+    setReady(false);
+    currentStream.current = null;
+    clearTimeout(frameTimeout.current);
     epoch.current++;
     controller.current.abort();
     controller.current = new AbortController();
@@ -61,8 +80,11 @@ export function useOrbis(accessCode: string) {
           body: JSON.stringify({ leaseId: oldLease }),
         }).catch(() => {})
       : Promise.resolve();
+    // Backend release owns the quota. Slow WebRTC detachment must not add
+    // another wait after Reactor has already confirmed the old session closed.
+    void old?.disconnect().catch(() => {});
     teardown.current = teardown.current.then(async () => {
-      await Promise.allSettled([old?.disconnect(), releaseRequest]);
+      await releaseRequest;
     });
   }, [accessCode]);
   const fail = useCallback(
@@ -80,7 +102,7 @@ export function useOrbis(accessCode: string) {
   const steer = useCallback(
     async (prompt: string, visualChange = "") => {
       pending.current = { full: prompt, change: visualChange };
-      if (connecting.current) return;
+      if (connecting.current) return pictures.current.wait();
       const generation = epoch.current;
       const currentSession = () => epoch.current === generation;
       const signal = controller.current.signal;
@@ -106,8 +128,10 @@ export function useOrbis(accessCode: string) {
             if (currentSession()) fail(cause);
           });
         await commandQueue.current;
-        return;
+        return currentSession() ? pictures.current.wait() : false;
       }
+      pictures.current.begin();
+      setReady(false);
       connecting.current = true;
       setError("");
       setStatus("Waking up your living world…");
@@ -151,7 +175,10 @@ export function useOrbis(accessCode: string) {
         const currentAttempt = () =>
           currentSession() && client.current === reactor;
         reactor.on("trackReceived", (name, _track, media) => {
-          if (currentAttempt() && name === "main_video") setStream(media);
+          if (currentAttempt() && name === "main_video") {
+            currentStream.current = media;
+            setStream(media);
+          }
         });
         reactor.on("error", (cause) => {
           if (currentAttempt() && !establishing) fail(cause);
@@ -213,6 +240,11 @@ export function useOrbis(accessCode: string) {
         await startOrbisRun(transportFor(reactor), initialPrompt.full, signal);
         if (!currentSession()) return;
         started.current = true;
+        const timeout = setTimeout(() => {
+          if (currentAttempt()) fail({ code: "FIRST_FRAME_TIMEOUT" });
+        }, 90000);
+        frameTimeout.current = timeout;
+        void pictures.current.wait().then(() => clearTimeout(timeout));
         // A second story page can arrive while the initial prompt is being prepared.
         // Startup can coalesce several turns, so use the latest complete scene here.
         // Once connected, ordinary updates use only the visible transition.
@@ -232,6 +264,7 @@ export function useOrbis(accessCode: string) {
       } finally {
         if (currentSession()) connecting.current = false;
       }
+      return currentSession() ? pictures.current.wait() : false;
     },
     [accessCode, fail],
   );
@@ -290,5 +323,15 @@ export function useOrbis(accessCode: string) {
       stop();
     };
   }, [stop]);
-  return { stream, status, error, steer, pause, stop };
+  return {
+    stream,
+    status,
+    error,
+    steer,
+    pause,
+    stop,
+    waitForPicture,
+    pictureReady,
+    ready,
+  };
 }
