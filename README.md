@@ -6,7 +6,7 @@ Children start with one spoken or typed idea, then shape the next page with ques
 
 ## Run locally
 
-Requires Node.js 22.12+ (tested with Node 24).
+Requires Node.js 24.
 
 ```sh
 npm install
@@ -60,7 +60,7 @@ Story text and visual generation are asynchronous. Reactor documents multi-minut
 - The app does not write recordings, transcripts, profiles, or stories to disk or a database. Refreshing clears the session. Audio is held briefly in memory for transcription.
 - OpenAI receives audio, story text/history, and age/language preferences. Reactor receives fictional visual prompts. Provider retention policies apply; `store: false` is not a claim of zero data retention.
 - Input/output moderation and story constraints reduce risk but cannot guarantee child-safe text or video. This is a supervised hackathon prototype, not a production child-facing service. Before real child testing or a public launch, review provider requirements for minors, retention/consent, visual safety, authentication, and spending limits.
-- The local server binds to loopback. There is no public app deployment yet. Use proper authentication and provider usage limits before exposing paid API endpoints; the optional shared code is only a hackathon safeguard.
+- The development server binds to loopback; production listens on `0.0.0.0` and Railway’s assigned `PORT`. Use proper authentication and provider usage limits before exposing paid API endpoints; the optional shared code is only a hackathon safeguard.
 
 ## Validation
 
@@ -85,3 +85,9 @@ The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-st
 Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Regression tests cover early/late readiness, rejected commands, timeout, and cancellation.
 
 The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from the browser. Live provider behavior still needs verification with real keys.
+
+## Railway deployment
+
+The GitHub-connected Railway service deploys from `main`. `railway.json` specifies the production build, start command, and `/healthz` healthcheck. Node 24 is selected through `package.json`; the TypeScript runtime is a production dependency. Railway’s HTTPS proxy is trusted only when its environment marker is present.
+
+Set `OPENAI_API_KEY`, `REACTOR_API_KEY`, and optionally `APP_ACCESS_CODE` in Railway’s service Variables. Local `.env` files are ignored by Git and are not sent by the GitHub deployment. Without keys the deployed app runs in demo mode. Do not set `PORT` manually unless configuring a specific target port.

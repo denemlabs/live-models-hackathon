@@ -15,6 +15,9 @@ if (process.env.NODE_ENV === "production") {
   app.use(vite.middlewares);
 }
 const port = Number(process.env.PORT || 3000);
-app.listen(port, "127.0.0.1", () =>
+const host =
+  process.env.HOST ||
+  (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
+app.listen(port, host, () =>
   console.log(`Little Wonder is ready at http://localhost:${port}`),
 );

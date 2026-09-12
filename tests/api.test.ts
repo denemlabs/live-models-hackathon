@@ -182,3 +182,34 @@ test("Reactor token exchange is server-only, model scoped, and limited to one se
     globalThis.fetch = original;
   }
 });
+
+test("Railway healthcheck is public and HTTPS proxy requests retain origin validation", async () => {
+  await withServer(
+    { RAILWAY_ENVIRONMENT_ID: "test-env", APP_ACCESS_CODE: "test-access" },
+    async (base) => {
+      const health = await fetch(`${base}/healthz`);
+      assert.equal(health.status, 200);
+      assert.deepEqual(await health.json(), { status: "ok" });
+      const body = { input: "A friendly fox", profile, demo: true };
+      const headers = {
+        "x-access-code": "test-access",
+        "x-forwarded-proto": "https",
+        "x-forwarded-for": "192.0.2.10",
+        origin: base.replace("http:", "https:"),
+      };
+      assert.equal(
+        (await post(`${base}/api/story`, body, headers)).status,
+        200,
+      );
+      assert.equal(
+        (
+          await post(`${base}/api/story`, body, {
+            ...headers,
+            origin: "https://unrelated.example",
+          })
+        ).status,
+        403,
+      );
+    },
+  );
+});

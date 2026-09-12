@@ -14,6 +14,9 @@ import {
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const app = express();
   app.disable("x-powered-by");
+  // Railway terminates HTTPS at its reverse proxy. Trust that one hop only.
+  if (env.RAILWAY_ENVIRONMENT_ID) app.set("trust proxy", 1);
+  app.get("/healthz", (_req, res) => res.status(200).json({ status: "ok" }));
   const openai = env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 45000, maxRetries: 1 })
     : null;
@@ -66,11 +69,9 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
   app.post("/api/story", async (req, res) => {
     const parsed = StoryRequestSchema.safeParse(req.body);
     if (!parsed.success) {
-      res
-        .status(400)
-        .json({
-          error: "Please give us a short story idea and a valid age range.",
-        });
+      res.status(400).json({
+        error: "Please give us a short story idea and a valid age range.",
+      });
       return;
     }
     const data = parsed.data;
@@ -79,12 +80,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       return;
     }
     if (!openai) {
-      res
-        .status(503)
-        .json({
-          error:
-            "The story connection needs an OpenAI key. You can try the demo for now.",
-        });
+      res.status(503).json({
+        error:
+          "The story connection needs an OpenAI key. You can try the demo for now.",
+      });
       return;
     }
     try {
@@ -93,12 +92,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         input: [data.input, data.topic].join("\n"),
       });
       if (moderation.results.some((r) => r.flagged)) {
-        res
-          .status(422)
-          .json({
-            error:
-              "Let’s choose a gentle adventure instead — perhaps a friendly animal or a magical garden.",
-          });
+        res.status(422).json({
+          error:
+            "Let’s choose a gentle adventure instead — perhaps a friendly animal or a magical garden.",
+        });
         return;
       }
       const response = await openai.responses.parse({
@@ -120,11 +117,9 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       });
       const page = response.output_parsed;
       if (!page || page.choices.length !== 2) {
-        res
-          .status(422)
-          .json({
-            error: "That page needs a little more magic. Try a different idea.",
-          });
+        res.status(422).json({
+          error: "That page needs a little more magic. Try a different idea.",
+        });
         return;
       }
       const checked = await openai.moderations.create({
@@ -139,12 +134,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       }
       res.json({ page, mode: "live" });
     } catch {
-      res
-        .status(502)
-        .json({
-          error:
-            "The storyteller could not connect. Check the OpenAI key and model access, then try again.",
-        });
+      res.status(502).json({
+        error:
+          "The storyteller could not connect. Check the OpenAI key and model access, then try again.",
+      });
     }
   });
   const upload = multer({
@@ -153,11 +146,9 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
   });
   app.post("/api/transcribe", upload.single("audio"), async (req, res) => {
     if (!openai) {
-      res
-        .status(503)
-        .json({
-          error: "Voice needs an OpenAI key. You can type your idea instead.",
-        });
+      res.status(503).json({
+        error: "Voice needs an OpenAI key. You can type your idea instead.",
+      });
       return;
     }
     const file = req.file;
@@ -184,11 +175,9 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       });
       res.json({ text: result.text.slice(0, 1000) });
     } catch {
-      res
-        .status(502)
-        .json({
-          error: "We couldn’t hear that just now. Please try again or type it.",
-        });
+      res.status(502).json({
+        error: "We couldn’t hear that just now. Please try again or type it.",
+      });
     }
   });
   app.post("/api/reactor/token", async (_req, res) => {
@@ -221,12 +210,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!token.jwt) throw new Error("Missing token");
       res.json({ jwt: token.jwt, model });
     } catch {
-      res
-        .status(502)
-        .json({
-          error:
-            "The live pictures couldn’t connect. Check your Reactor key and Orbis access.",
-        });
+      res.status(502).json({
+        error:
+          "The live pictures couldn’t connect. Check your Reactor key and Orbis access.",
+      });
     }
   });
   app.use("/api", (_req, res) => {
@@ -240,14 +227,12 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       _next: express.NextFunction,
     ) => {
       const status = err instanceof multer.MulterError ? 413 : 400;
-      res
-        .status(status)
-        .json({
-          error:
-            status === 413
-              ? "Keep voice messages under 30 seconds and 8 MB."
-              : "We couldn’t read that request. Please try again.",
-        });
+      res.status(status).json({
+        error:
+          status === 413
+            ? "Keep voice messages under 30 seconds and 8 MB."
+            : "We couldn’t read that request. Please try again.",
+      });
     },
   );
   return app;
