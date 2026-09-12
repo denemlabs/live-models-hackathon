@@ -213,3 +213,84 @@ test("Railway healthcheck is public and HTTPS proxy requests retain origin valid
     },
   );
 });
+
+test("narration validates input and requires a configured provider", async () => {
+  await withServer({}, async (base) => {
+    for (const text of ["", " ", "x".repeat(2001), 123]) {
+      assert.equal((await post(`${base}/api/narrate`, { text })).status, 400);
+    }
+    assert.equal(
+      (await post(`${base}/api/narrate`, { text: "A friendly fox." })).status,
+      503,
+    );
+  });
+});
+
+test("narration returns audio while keeping provider keys and failures private", async () => {
+  const original = globalThis.fetch;
+  let fail = false;
+  globalThis.fetch = async (input, init) => {
+    if (String(input).startsWith("https://api.elevenlabs.io/")) {
+      assert.equal(
+        (init!.headers as Record<string, string>)["xi-api-key"],
+        "test-voice-secret",
+      );
+      assert.match(
+        String(input),
+        /test-voice\/stream\?output_format=mp3_44100_128$/,
+      );
+      const data = JSON.parse(init!.body as string);
+      assert.equal(data.text, "A friendly fox.");
+      assert.equal(data.model_id, "eleven_flash_v2_5");
+      assert.equal(data.apiKey, undefined);
+      return fail
+        ? new Response("private provider details test-voice-secret", {
+            status: 401,
+          })
+        : new Response(new Uint8Array([73, 68, 51, 4]), {
+            headers: { "Content-Type": "audio/mpeg" },
+          });
+    }
+    return original(input, init);
+  };
+  try {
+    await withServer(
+      {
+        ELEVENLABS_API_KEY: "test-voice-secret",
+        ELEVENLABS_VOICE_ID: "test-voice",
+        APP_ACCESS_CODE: "test-access",
+      },
+      async (base) => {
+        const body = { text: "A friendly fox." };
+        assert.equal((await post(`${base}/api/narrate`, body)).status, 401);
+        const headers = { "x-access-code": "test-access" };
+        assert.equal(
+          (
+            await post(`${base}/api/narrate`, body, {
+              ...headers,
+              origin: "https://unrelated.example",
+            })
+          ).status,
+          403,
+        );
+        const response = await post(`${base}/api/narrate`, body, headers);
+        assert.equal(response.status, 200);
+        assert.match(response.headers.get("content-type")!, /^audio\/mpeg/);
+        assert.equal(response.headers.get("cache-control"), "no-store");
+        assert.deepEqual(
+          new Uint8Array(await response.arrayBuffer()),
+          new Uint8Array([73, 68, 51, 4]),
+        );
+        const config = await (await fetch(`${base}/api/config`)).json();
+        assert.equal(config.elevenlabs, true);
+        assert.ok(!JSON.stringify(config).includes("test-voice-secret"));
+        fail = true;
+        const failed = await post(`${base}/api/narrate`, body, headers);
+        assert.equal(failed.status, 502);
+        assert.ok(!(await failed.text()).includes("test-voice-secret"));
+      },
+    );
+  } finally {
+    globalThis.fetch = original;
+  }
+});

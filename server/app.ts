@@ -4,6 +4,7 @@ import { rateLimit } from "express-rate-limit";
 import OpenAI, { toFile } from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { timingSafeEqual } from "node:crypto";
+import { z } from "zod";
 import {
   PageSchema,
   StoryRequestSchema,
@@ -36,6 +37,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
     res.json({
       openai: !!openai,
       reactor: !!env.REACTOR_API_KEY,
+      elevenlabs: !!env.ELEVENLABS_API_KEY,
       accessCodeRequired: !!env.APP_ACCESS_CODE,
     }),
   );
@@ -66,6 +68,67 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
     }),
   );
   app.use(express.json({ limit: "64kb" }));
+  app.post("/api/narrate", async (req, res) => {
+    const parsed = z
+      .object({ text: z.string().trim().min(1).max(2000) })
+      .safeParse(req.body);
+    if (!parsed.success) {
+      res
+        .status(400)
+        .json({ error: "Choose a short story page to read aloud." });
+      return;
+    }
+    if (!env.ELEVENLABS_API_KEY) {
+      res
+        .status(503)
+        .json({ error: "ElevenLabs narration is not configured." });
+      return;
+    }
+    const controller = new AbortController();
+    const disconnected = () => controller.abort();
+    res.on("close", disconnected);
+    try {
+      const voice = env.ELEVENLABS_VOICE_ID || "JBFqnCBsd6RMkjVDRZzb";
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}/stream?output_format=mp3_44100_128`,
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": env.ELEVENLABS_API_KEY,
+            "Content-Type": "application/json",
+            Accept: "audio/mpeg",
+          },
+          body: JSON.stringify({
+            text: parsed.data.text,
+            model_id: env.ELEVENLABS_MODEL || "eleven_flash_v2_5",
+            voice_settings: { stability: 0.6, similarity_boost: 0.75 },
+          }),
+          signal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(30000),
+          ]),
+        },
+      );
+      if (
+        !response.ok ||
+        !response.headers.get("content-type")?.startsWith("audio/")
+      )
+        throw new Error("Narration unavailable");
+      // Short pages are buffered in memory for consistent browser playback.
+      const audio = Buffer.from(await response.arrayBuffer());
+      if (!audio.length) throw new Error("Empty narration");
+      if (!controller.signal.aborted) res.type("audio/mpeg").send(audio);
+    } catch {
+      if (!controller.signal.aborted)
+        res
+          .status(502)
+          .json({
+            error: "Narration couldn’t connect. You can use the browser voice.",
+          });
+    } finally {
+      res.off("close", disconnected);
+    }
+  });
   app.post("/api/story", async (req, res) => {
     const parsed = StoryRequestSchema.safeParse(req.body);
     if (!parsed.success) {

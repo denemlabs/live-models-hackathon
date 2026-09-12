@@ -28,10 +28,12 @@ import Illustration from "./Illustration";
 import { api } from "./api";
 import { useOrbis } from "./useOrbis";
 import { useMicrophone } from "./useMicrophone";
+import { useNarration } from "./useNarration";
 
 type Config = {
   openai: boolean;
   reactor: boolean;
+  elevenlabs: boolean;
   accessCodeRequired: boolean;
 };
 const inspirations = [
@@ -73,7 +75,6 @@ export default function App() {
   const [consent, setConsent] = useState(false);
   const [accessCode, setAccessCode] = useState("");
   const [paused, setPaused] = useState(false);
-  const [speaking, setSpeaking] = useState(false);
   const [lastWords, setLastWords] = useState("");
   const [selectedTheme, setSelectedTheme] = useState<
     "forest" | "ocean" | "space"
@@ -87,10 +88,13 @@ export default function App() {
   const orbis = useOrbis(accessCode);
   const inStory = pages.length > 0 || opening;
   const locked = busy || paused;
-  const mute = () => {
-    window.speechSynthesis?.cancel();
-    setSpeaking(false);
-  };
+  const { speaking, read, mute } = useNarration({
+    elevenlabs: !!config?.elevenlabs && consent && !demo,
+    enabled: profile.readAloud,
+    accessCode,
+    youngReader: profile.age === "3–5",
+    onError: setError,
+  });
 
   useEffect(() => {
     api<Config>("/api/config")
@@ -112,9 +116,6 @@ export default function App() {
     if (video.current) video.current.srcObject = orbis.stream;
   }, [orbis.stream, inStory]);
   useEffect(() => {
-    if (!profile.readAloud) mute();
-  }, [profile.readAloud]);
-  useEffect(() => {
     if (video.current && orbis.stream) {
       if (paused) video.current.pause();
       else void video.current.play().catch(() => {});
@@ -123,28 +124,9 @@ export default function App() {
   useEffect(
     () => () => {
       request.current?.abort();
-      window.speechSynthesis?.cancel();
     },
     [],
   );
-
-  function read(text: string) {
-    mute();
-    if (!window.speechSynthesis) {
-      setError(
-        "Read aloud isn’t available in this browser. The story is always shown as text.",
-      );
-      return;
-    }
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "en-US";
-    utterance.rate = profile.age === "3–5" ? 0.8 : 0.9;
-    utterance.pitch = 1.05;
-    utterance.onstart = () => setSpeaking(true);
-    utterance.onend = () => setSpeaking(false);
-    utterance.onerror = () => setSpeaking(false);
-    window.speechSynthesis.speak(utterance);
-  }
 
   async function tell(words: string) {
     if (!words.trim() || busy || paused) return;
@@ -185,7 +167,7 @@ export default function App() {
       setInput("");
       setOpening(false);
       if (profile.readAloud)
-        read(result.page.narrative + " " + result.page.question);
+        void read(result.page.narrative + " " + result.page.question, true);
       if (!demo && config?.reactor) void orbis.steer(result.page.visualPrompt);
       setTimeout(() => bookRef.current?.focus(), 50);
     } catch (e) {
@@ -247,7 +229,7 @@ export default function App() {
   function flip(index: number) {
     mute();
     setPageIndex(index);
-    if (profile.readAloud) read(pages[index].narrative);
+    if (profile.readAloud) void read(pages[index].narrative, true);
     if (!demo && config?.reactor && !paused)
       void orbis.steer(pages[index].visualPrompt);
   }
@@ -757,15 +739,17 @@ export default function App() {
                 type or choose a story direction.
               </p>
               <p>
-                Read aloud uses your browser’s synthetic voice. Illustrations
+                Live read aloud uses an AI voice from ElevenLabs when
+                configured, with browser narration as a fallback. Illustrations
                 stay visible while live video connects. Demo mode uses curated
                 scenes instead of AI generation.
               </p>
               <p>
                 Voice clips are sent to OpenAI for transcription; story text and
                 preferences are sent for generation. Only scene descriptions go
-                to Reactor. This app keeps no recordings or saved profiles.
-                Providers’ own data policies still apply.
+                to Reactor. Narrated story pages go to ElevenLabs. This app
+                keeps no recordings or saved profiles. Providers’ own data
+                policies still apply.
               </p>
             </>
           ) : (
@@ -819,7 +803,9 @@ export default function App() {
                     {
                       key: "readAloud",
                       label: "Read the story aloud",
-                      detail: "Synthetic narration from your browser.",
+                      detail: config?.elevenlabs
+                        ? "ElevenLabs AI voice in live mode; browser voice in demo mode."
+                        : "Synthetic narration from your browser.",
                     },
                   ] as const
                 ).map((option) => (
@@ -847,7 +833,7 @@ export default function App() {
                 <div>
                   <span>
                     <i className={config?.openai ? "connected" : ""} /> GPT
-                    stories & voice
+                    stories & transcription
                   </span>
                   <small>{config?.openai ? "Ready" : "Key needed"}</small>
                 </div>
@@ -858,6 +844,15 @@ export default function App() {
                   </span>
                   <small>
                     {config?.reactor ? "Key configured" : "Key needed"}
+                  </small>
+                </div>
+                <div>
+                  <span>
+                    <i className={config?.elevenlabs ? "connected" : ""} />{" "}
+                    ElevenLabs narration
+                  </span>
+                  <small>
+                    {config?.elevenlabs ? "Key configured" : "Browser voice"}
                   </small>
                 </div>
                 <label className="demo-toggle">
@@ -893,8 +888,8 @@ export default function App() {
                 />
                 <span>
                   I’m a grown-up supervising this session. I allow sending voice
-                  clips and story text to OpenAI, and scene descriptions to
-                  Reactor.
+                  clips and story text to OpenAI, scene descriptions to Reactor,
+                  and narrated story pages to ElevenLabs when enabled.
                 </span>
               </label>
               <p className="privacy-note">
