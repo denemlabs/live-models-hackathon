@@ -837,9 +837,6 @@ export default function App({
                   A LITTLE VOICE. A WORLD OF WONDER.
                 </span>
                 <h1>What would you like your story to be about?</h1>
-                <p>
-                  A brave princess, a friendly dragon, or anything you imagine.
-                </p>
                 <form
                   onSubmit={(event) => {
                     event.preventDefault();
