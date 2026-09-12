@@ -1,0 +1,144 @@
+import {
+  storytellerGreeting,
+  storytellerInstructions,
+  storytellerTools,
+  type CallOverrides,
+  type CallRequest,
+} from "../shared/storyteller";
+
+const API = "https://api.elevenlabs.io/v1";
+// Bump this when the tool contract changes so a stale agent is never reused.
+const AGENT_NAME = "Little Wonder storyteller v1";
+const DEFAULT_VOICE = "JBFqnCBsd6RMkjVDRZzb";
+const DEFAULT_LLM = "gemini-2.5-flash";
+
+class SetupError extends Error {}
+
+export function createStoryteller(env: NodeJS.ProcessEnv) {
+  if (!env.ELEVENLABS_API_KEY) return null;
+  const auth = { "xi-api-key": env.ELEVENLABS_API_KEY };
+  const pinned = env.ELEVENLABS_AGENT_ID?.trim();
+  const voiceId = env.ELEVENLABS_VOICE_ID?.trim() || DEFAULT_VOICE;
+
+  async function call<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(`${API}${path}`, {
+      ...init,
+      headers: {
+        ...auth,
+        ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (!response.ok)
+      throw new SetupError(
+        `${init?.method ?? "GET"} ${path} → ${response.status} ${await response.text().catch(() => "")}`.slice(
+          0,
+          400,
+        ),
+      );
+    return (await response.json()) as T;
+  }
+
+  async function toolId(tool: (typeof storytellerTools)[number]) {
+    const found = await call<{
+      tools: { id: string; tool_config: { name: string; type: string } }[];
+    }>(`/convai/tools?search=${encodeURIComponent(tool.name)}&page_size=100`);
+    const existing = found.tools.find(
+      (t) =>
+        t.tool_config.name === tool.name && t.tool_config.type === "client",
+    );
+    if (existing) return existing.id;
+    const created = await call<{ id?: string; tool_id?: string }>(
+      "/convai/tools",
+      { method: "POST", body: JSON.stringify({ tool_config: tool }) },
+    );
+    const id = created.id ?? created.tool_id;
+    if (!id) throw new SetupError("Tool creation returned no id.");
+    return id;
+  }
+
+  async function provision() {
+    const found = await call<{ agents: { agent_id: string; name: string }[] }>(
+      `/convai/agents?search=${encodeURIComponent(AGENT_NAME)}&page_size=100`,
+    );
+    const existing = found.agents.find((a) => a.name === AGENT_NAME);
+    if (existing) return existing.agent_id;
+    const toolIds = [];
+    for (const tool of storytellerTools) toolIds.push(await toolId(tool));
+    const created = await call<{ agent_id: string }>("/convai/agents/create", {
+      method: "POST",
+      body: JSON.stringify({
+        name: AGENT_NAME,
+        tags: ["little-wonder"],
+        conversation_config: {
+          agent: {
+            first_message: "Hello there. Shall we begin a story?",
+            language: "en",
+            prompt: {
+              prompt:
+                "You are a gentle fairy-tale storyteller for one child. Wait for the session instructions.",
+              llm: env.ELEVENLABS_LLM?.trim() || DEFAULT_LLM,
+              temperature: 0.7,
+              tool_ids: toolIds,
+            },
+          },
+          tts: { voice_id: voiceId, speed: 0.95, stability: 0.55 },
+          // Children think mid-sentence. Let the pauses breathe.
+          turn: { turn_timeout: 12, turn_eagerness: "patient" },
+          conversation: { max_duration_seconds: 900 },
+        },
+        platform_settings: {
+          overrides: {
+            conversation_config_override: {
+              agent: {
+                first_message: true,
+                language: true,
+                prompt: { prompt: true },
+              },
+              tts: { voice_id: true },
+            },
+          },
+        },
+      }),
+    });
+    console.log(
+      `Little Wonder created an ElevenLabs storyteller agent: ${created.agent_id}\n` +
+        `Pin it with ELEVENLABS_AGENT_ID=${created.agent_id} to reuse it across deploys.`,
+    );
+    return created.agent_id;
+  }
+
+  let agent: Promise<string> | null = pinned ? Promise.resolve(pinned) : null;
+  function agentId() {
+    // Cache the in-flight promise so concurrent calls never provision twice,
+    // but drop it on failure so a transient error is retried.
+    if (!agent)
+      agent = provision().catch((error: unknown) => {
+        agent = null;
+        throw error;
+      });
+    return agent;
+  }
+
+  return {
+    async session(request: CallRequest) {
+      const id = await agentId();
+      const { token } = await call<{ token: string }>(
+        `/convai/conversation/token?agent_id=${encodeURIComponent(id)}`,
+      );
+      // A pinned agent belongs to whoever configured it, and its override
+      // permissions are unknown. Only steer agents we provisioned ourselves.
+      const overrides: CallOverrides | null = pinned
+        ? null
+        : {
+            agent: {
+              prompt: { prompt: storytellerInstructions(request) },
+              firstMessage: storytellerGreeting(request),
+              language: "en",
+            },
+            tts: { voiceId },
+          };
+      return { token, overrides };
+    },
+  };
+}

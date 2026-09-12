@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   ArrowRight,
@@ -13,6 +13,7 @@ import {
   Mic,
   Moon,
   Pause,
+  Phone,
   Play,
   Settings2,
   ShieldCheck,
@@ -24,14 +25,19 @@ import {
   X,
 } from "lucide-react";
 import { ProfileSchema, type Profile, type StoryPage } from "../shared/story";
+import type { SceneArgs } from "../shared/storyteller";
 import Illustration from "./Illustration";
 import { api } from "./api";
 import { useOrbis } from "./useOrbis";
 import { useMicrophone } from "./useMicrophone";
 
+// The ElevenLabs WebRTC client is only needed once a child places a call.
+const StoryCall = lazy(() => import("./StoryCall"));
+
 type Config = {
   openai: boolean;
   reactor: boolean;
+  storyteller: boolean;
   accessCodeRequired: boolean;
 };
 const inspirations = [
@@ -74,6 +80,7 @@ export default function App() {
   const [accessCode, setAccessCode] = useState("");
   const [paused, setPaused] = useState(false);
   const [speaking, setSpeaking] = useState(false);
+  const [inCall, setInCall] = useState(false);
   const [lastWords, setLastWords] = useState("");
   const [selectedTheme, setSelectedTheme] = useState<
     "forest" | "ocean" | "space"
@@ -234,6 +241,7 @@ export default function App() {
     mic.cancel();
     mute();
     orbis.stop();
+    setInCall(false);
     setPages([]);
     setPageIndex(0);
     setOpening(false);
@@ -260,6 +268,37 @@ export default function App() {
     else if (!value && !demo && config?.reactor && !orbis.stream && page)
       void orbis.steer(page.visualPrompt);
     else await orbis.pause(value);
+  }
+  function callStoryteller() {
+    if (!config?.storyteller) {
+      setError(
+        "Add an ElevenLabs key to call the storyteller. You can still read a story here.",
+      );
+      return;
+    }
+    if (!consent) {
+      setSettings(true);
+      setError("A grown-up needs to enable live storytelling first.");
+      return;
+    }
+    requestGeneration.current++;
+    request.current?.abort();
+    mic.cancel();
+    mute();
+    setError("");
+    setBusy(false);
+    setPaused(false);
+    setInCall(true);
+  }
+  function callScene(scene: SceneArgs) {
+    setSelectedTheme(scene.theme);
+    if (config?.reactor && scene.visual_prompt)
+      void orbis.steer(scene.visual_prompt);
+  }
+  function callPage(page: StoryPage) {
+    setPages((prev) => [...prev, page]);
+    setPageIndex(pages.length);
+    if (!topic) setTopic(page.title);
   }
   const canSubmit =
     input.trim().length > 0 &&
@@ -354,6 +393,24 @@ export default function App() {
                   </span>
                   {mic.recording && <span className="record-dot" />}
                 </button>
+                <button
+                  className="call-button"
+                  onClick={callStoryteller}
+                  disabled={locked || mic.recording || micBusy}
+                >
+                  <span className="call-circle">
+                    <Phone size={21} />
+                  </span>
+                  <span>
+                    <strong>
+                      Call the storyteller
+                      <small>
+                        Talk out loud, and they’ll tell it back to you
+                      </small>
+                    </strong>
+                  </span>
+                  <ChevronRight size={17} />
+                </button>
                 <div className="or-line">
                   <span /> or write a little something <span />
                 </div>
@@ -438,14 +495,23 @@ export default function App() {
               <span className="section-label">
                 {demo ? "YOUR DEMO ADVENTURE" : "YOUR VERY OWN LIVING STORY"}
               </span>
-              <button
-                className="text-button"
-                onClick={togglePause}
-                disabled={busy}
-              >
-                {paused ? <Play size={16} /> : <Pause size={16} />}{" "}
-                {paused ? "Resume" : "Pause"}
-              </button>
+              <div className="story-heading-actions">
+                <button
+                  className="text-button"
+                  onClick={callStoryteller}
+                  disabled={busy}
+                >
+                  <Phone size={15} /> Call the storyteller
+                </button>
+                <button
+                  className="text-button"
+                  onClick={togglePause}
+                  disabled={busy}
+                >
+                  {paused ? <Play size={16} /> : <Pause size={16} />}{" "}
+                  {paused ? "Resume" : "Pause"}
+                </button>
+              </div>
             </div>
             <div
               className={`storybook ${opening ? "opening" : ""}`}
@@ -706,12 +772,36 @@ export default function App() {
           </p>
         )}
       </main>
+      {inCall && (
+        <Suspense
+          fallback={
+            <div className="call call-loading">
+              <LoaderCircle className="spin" size={30} />
+              <p>Reaching the storyteller…</p>
+            </div>
+          }
+        >
+          <StoryCall
+            accessCode={accessCode}
+            profile={profile}
+            topic={topic}
+            history={pages}
+            stream={orbis.stream}
+            pictureStatus={orbis.status}
+            livePictures={!!config?.reactor}
+            onScene={callScene}
+            onPage={callPage}
+            onLeave={() => setInCall(false)}
+          />
+        </Suspense>
+      )}
+
       <footer>
         <span>
           <BookOpen size={15} /> Small stories. Endless possibilities.
         </span>
         <div>
-          <span>Made with GPT + Orbis</span>
+          <span>Made with GPT + Orbis + ElevenLabs</span>
           <button onClick={() => setHelp(true)}>
             How the magic works <CircleHelp size={14} />
           </button>
@@ -755,6 +845,12 @@ export default function App() {
                 Tap the microphone, say your idea, then tap again to send it.
                 Each question or reaction shapes the next page. You can also
                 type or choose a story direction.
+              </p>
+              <p>
+                A story call is different. An ElevenLabs storyteller joins over
+                a live connection and tells the story out loud, in real time.
+                You can interrupt, ask questions, and change your mind, and the
+                pages fill in as they talk.
               </p>
               <p>
                 Read aloud uses your browser’s synthetic voice. Illustrations
@@ -860,6 +956,13 @@ export default function App() {
                     {config?.reactor ? "Key configured" : "Key needed"}
                   </small>
                 </div>
+                <div>
+                  <span>
+                    <i className={config?.storyteller ? "connected" : ""} />{" "}
+                    ElevenLabs story calls
+                  </span>
+                  <small>{config?.storyteller ? "Ready" : "Key needed"}</small>
+                </div>
                 <label className="demo-toggle">
                   <input
                     type="checkbox"
@@ -893,8 +996,8 @@ export default function App() {
                 />
                 <span>
                   I’m a grown-up supervising this session. I allow sending voice
-                  clips and story text to OpenAI, and scene descriptions to
-                  Reactor.
+                  clips and story text to OpenAI, scene descriptions to Reactor,
+                  and live call audio to ElevenLabs.
                 </span>
               </label>
               <p className="privacy-note">

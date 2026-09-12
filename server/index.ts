@@ -1,7 +1,9 @@
-import "dotenv/config";
+import { config } from "dotenv";
 import express from "express";
 import { resolve } from "node:path";
 import { createApp } from "./app";
+// dotenv never overwrites what is already set, so the first file listed wins.
+config({ path: [".env.local", ".env"], quiet: true });
 const app = createApp();
 if (process.env.NODE_ENV === "production") {
   app.use(express.static(resolve("dist")));

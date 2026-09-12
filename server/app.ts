@@ -10,6 +10,8 @@ import {
   demoPage,
   storyInstructions,
 } from "../shared/story";
+import { CallRequestSchema } from "../shared/storyteller";
+import { createStoryteller } from "./storyteller";
 
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const app = express();
@@ -20,6 +22,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const openai = env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 45000, maxRetries: 1 })
     : null;
+  const storyteller = createStoryteller(env);
   app.use("/api", (_req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
@@ -36,6 +39,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
     res.json({
       openai: !!openai,
       reactor: !!env.REACTOR_API_KEY,
+      storyteller: !!storyteller,
       accessCodeRequired: !!env.APP_ACCESS_CODE,
     }),
   );
@@ -213,6 +217,29 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       res.status(502).json({
         error:
           "The live pictures couldn’t connect. Check your Reactor key and Orbis access.",
+      });
+    }
+  });
+  app.post("/api/storyteller/token", async (req, res) => {
+    if (!storyteller) {
+      res.status(503).json({
+        error: "A story call needs an ElevenLabs API key.",
+      });
+      return;
+    }
+    const parsed = CallRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Please choose an age range first." });
+      return;
+    }
+    try {
+      res.json(await storyteller.session(parsed.data));
+    } catch (error) {
+      // Provisioning failures are a setup problem the developer has to see.
+      console.error("Storyteller session failed:", error);
+      res.status(502).json({
+        error:
+          "The storyteller couldn’t come to the call. Check your ElevenLabs key and plan, then try again.",
       });
     }
   });

@@ -12,6 +12,7 @@
     "prebuild": "node scripts/prepare-runtime.mjs"
   },
   "dependencies": {
+    "@elevenlabs/react": "^1.15.2",
     "@fontsource/dm-sans": "^5.3.0",
     "@fontsource/dm-serif-display": "^5.3.0",
     "@reactor-team/js-sdk": "3.0.2",
@@ -23,8 +24,8 @@
     "openai": "^6.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "zod": "^4.1.0",
-    "tsx": "^4.20.0"
+    "tsx": "^4.20.0",
+    "zod": "^4.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
