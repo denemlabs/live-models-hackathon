@@ -23,6 +23,7 @@ function transportFor(reactor: Reactor): OrbisTransport {
 
 export function useOrbis(accessCode: string) {
   const client = useRef<Reactor | null>(null);
+  const savedStream = useRef<MediaStream | null>(null);
   const epoch = useRef(0);
   const pending = useRef({ full: "", change: "" });
   const connecting = useRef(false);
@@ -36,24 +37,47 @@ export function useOrbis(accessCode: string) {
   const commandQueue = useRef(Promise.resolve());
   const teardown = useRef(Promise.resolve());
   const lease = useRef<string | null>(null);
+  const stage = useRef("session preparation");
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined,
+  );
+  const [stageStarted, setStageStarted] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState(0);
+  const progress = useCallback((label: string, name: string) => {
+    stage.current = name;
+    setStatus(label);
+    setStageStarted(Date.now());
+    setElapsed(0);
+  }, []);
+  useEffect(() => {
+    if (stageStarted === null) return;
+    const timer = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - stageStarted) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [stageStarted]);
   const pictures = useRef(new PictureGate());
   const currentStream = useRef<MediaStream | null>(null);
-  const frameTimeout = useRef<ReturnType<typeof setTimeout> | undefined>(
+  const frameTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
   const waitForPicture = useCallback(() => pictures.current.wait(), []);
   const pictureReady = useCallback((media: MediaStream) => {
     if (currentStream.current !== media) return;
-    clearTimeout(frameTimeout.current);
+    clearTimeout(frameTimer.current);
     pictures.current.ready();
     setReady(true);
+    setStageStarted(null);
     setStatus("Live pictures");
   }, []);
   const stop = useCallback(() => {
     pictures.current.cancel();
     setReady(false);
     currentStream.current = null;
-    clearTimeout(frameTimeout.current);
+    clearTimeout(idleTimer.current);
+    clearTimeout(frameTimer.current);
+    setStageStarted(null);
     epoch.current++;
     controller.current.abort();
     controller.current = new AbortController();
@@ -63,6 +87,7 @@ export function useOrbis(accessCode: string) {
     commandQueue.current = Promise.resolve();
     const old = client.current;
     client.current = null;
+    savedStream.current = null;
     setStream(null);
     setStatus("Illustrated preview");
     setError("");
@@ -70,7 +95,7 @@ export function useOrbis(accessCode: string) {
     const oldLease = lease.current;
     lease.current = null;
     // Send cleanup immediately, including during pagehide. The backend owns
-    // the session; browser disconnect only detaches its WebRTC transport.
+    // the session and retains the cleanup handle even if the browser disappears.
     const releaseRequest = oldLease
       ? fetch("/api/reactor/session/release", {
           method: "POST",
@@ -91,9 +116,12 @@ export function useOrbis(accessCode: string) {
   }, [accessCode]);
   const fail = useCallback(
     (cause?: unknown) => {
-      const failure = orbisFailure(cause);
+      const failure = orbisFailure(cause, stage.current);
       // Never log prompts, tokens, or raw provider bodies.
-      console.warn("Orbis connection failed", failure.code);
+      console.warn("Orbis connection failed", {
+        code: failure.code,
+        stage: stage.current,
+      });
       stop();
       setError(failure.message);
       setStatus(failure.status);
@@ -103,6 +131,7 @@ export function useOrbis(accessCode: string) {
 
   const steer = useCallback(
     async (prompt: string, visualChange = "") => {
+      clearTimeout(idleTimer.current);
       const scene = { full: prompt, change: visualChange };
       pending.current = scene;
       setPromptStatus(
@@ -122,15 +151,39 @@ export function useOrbis(accessCode: string) {
             "Orbis accepted your choice. The picture may take a moment to change.",
           );
       };
+      if (client.current && !prompt) return;
       if (client.current) {
+        if (!started.current) {
+          pictures.current.begin();
+          setReady(false);
+        }
         const current = client.current;
         commandQueue.current = commandQueue.current
           .then(async () => {
             if (!currentSession() || client.current !== current) return;
             if (!started.current) {
+              progress("Starting the first picture…", "generation start");
               await startOrbisRun(transportFor(current), prompt, signal);
-              if (currentSession()) started.current = true;
+              if (currentSession()) {
+                started.current = true;
+                if (savedStream.current) {
+                  currentStream.current = new MediaStream(
+                    savedStream.current.getTracks(),
+                  );
+                  setStream(currentStream.current);
+                }
+                progress(
+                  "Waiting for the first living picture…",
+                  "first video frame",
+                );
+                const timeout = setTimeout(() => {
+                  if (currentSession()) fail({ code: "FIRST_FRAME_TIMEOUT" });
+                }, 90000);
+                frameTimer.current = timeout;
+                void pictures.current.wait().then(() => clearTimeout(timeout));
+              }
             } else {
+              stage.current = "prompt update";
               await checkedCommand(
                 transportFor(current),
                 "set_prompt",
@@ -151,11 +204,16 @@ export function useOrbis(accessCode: string) {
       setReady(false);
       connecting.current = true;
       setError("");
-      setStatus("Waking up your living world…");
+      progress("Preparing the video connection…", "session preparation");
       try {
         await teardown.current;
         if (!currentSession()) return;
-        setStatus("Closing the previous video and preparing yours…");
+        progress("Reserving your video session…", "session allocation");
+        // Attach a rejection handler immediately while allocation is in flight.
+        const sdk = import("@reactor-team/js-sdk").then(
+          (value) => ({ value }),
+          (error) => ({ error }),
+        );
         const token = await api<{
           leaseId: string;
           sessionId: string;
@@ -177,7 +235,10 @@ export function useOrbis(accessCode: string) {
           return;
         }
         lease.current = token.leaseId;
-        const { Reactor } = await import("@reactor-team/js-sdk");
+        progress("Loading the video player…", "player loading");
+        const loaded = await sdk;
+        if ("error" in loaded) throw loaded.error;
+        const { Reactor } = loaded.value;
         signal.throwIfAborted();
         const provider = token.provider;
         const reactor = new Reactor({
@@ -185,6 +246,7 @@ export function useOrbis(accessCode: string) {
           apiUrl: "https://api.reactor.inc",
           logLevel: "off",
           readyTimeoutMs: 240000,
+          controlRequestTimeoutMs: 30000,
           modelTracks: [...ORBIS_TRACKS],
         });
         client.current = reactor;
@@ -193,8 +255,11 @@ export function useOrbis(accessCode: string) {
           currentSession() && client.current === reactor;
         reactor.on("trackReceived", (name, _track, media) => {
           if (currentAttempt() && name === "main_video") {
-            currentStream.current = media;
-            setStream(media);
+            savedStream.current = media;
+            if (started.current && pending.current.full) {
+              currentStream.current = new MediaStream(media.getTracks());
+              setStream(currentStream.current);
+            }
           }
         });
         reactor.on("error", (cause) => {
@@ -230,12 +295,13 @@ export function useOrbis(accessCode: string) {
               if (
                 typeof message.frames_emitted === "number" &&
                 message.frames_emitted > 0
-              )
+              ) {
                 setStatus(
                   provider === "backup"
                     ? "Live pictures · backup"
                     : "Live pictures",
                 );
+              }
               break;
             case "state":
               if (typeof message.started === "boolean")
@@ -244,23 +310,44 @@ export function useOrbis(accessCode: string) {
           }
         });
         reactor.on("statusChanged", (state) => {
-          if (currentAttempt() && !establishing && state === "disconnected")
-            fail();
+          if (!currentAttempt()) return;
+          if (establishing && state === "connecting")
+            progress("Attaching to your video session…", "session attachment");
+          if (establishing && state === "waiting")
+            progress(
+              "Waiting for Orbis and its video connection…",
+              "Orbis startup / WebRTC",
+            );
+          if (!establishing && state === "disconnected") fail();
         });
 
+        progress("Connecting to Orbis…", "Orbis startup / WebRTC");
         await reactor.connect(token.jwt, { sessionId: token.sessionId });
+        console.info("Orbis connection timing", reactor.getConnectionTimings());
         establishing = false;
         signal.throwIfAborted();
         if (!currentSession()) return;
         const initialPrompt = pending.current;
-        setStatus("Waiting for the first living picture…");
+        if (!initialPrompt.full) {
+          setStatus("Video ready for your story");
+          setStageStarted(null);
+          return;
+        }
+        progress("Starting the first picture…", "generation start");
         await startOrbisRun(transportFor(reactor), initialPrompt.full, signal);
         if (!currentSession()) return;
         started.current = true;
+        if (savedStream.current) {
+          currentStream.current = new MediaStream(
+            savedStream.current.getTracks(),
+          );
+          setStream(currentStream.current);
+        }
+        progress("Waiting for the first living picture…", "first video frame");
         const timeout = setTimeout(() => {
           if (currentAttempt()) fail({ code: "FIRST_FRAME_TIMEOUT" });
         }, 90000);
-        frameTimeout.current = timeout;
+        frameTimer.current = timeout;
         void pictures.current.wait().then(() => clearTimeout(timeout));
         acknowledged(initialPrompt);
         // A second story page can arrive while the initial prompt is being prepared.
@@ -285,8 +372,44 @@ export function useOrbis(accessCode: string) {
       }
       return currentSession() ? pictures.current.wait() : false;
     },
-    [accessCode, fail],
+    [accessCode, fail, progress],
   );
+
+  // Connecting does not generate anything or send the child's unmoderated input.
+  const prepare = useCallback(() => steer(""), [steer]);
+  const resetStory = useCallback(() => {
+    if (connecting.current || !client.current) {
+      stop();
+      return;
+    }
+    const current = client.current;
+    const generation = epoch.current;
+    pending.current = { full: "", change: "" };
+    pictures.current.cancel();
+    setReady(false);
+    currentStream.current = null;
+    clearTimeout(frameTimer.current);
+    setStream(null);
+    setPromptStatus("");
+    setStageStarted(null);
+    started.current = false;
+    commandQueue.current = commandQueue.current
+      .then(async () => {
+        if (generation !== epoch.current) return;
+        await checkedCommand(
+          transportFor(current),
+          "reset",
+          {},
+          "generation_reset",
+          controller.current.signal,
+        );
+      })
+      .catch((cause) => {
+        if (generation === epoch.current) fail(cause);
+      });
+    // Keep the single connected session briefly; release it if no story follows.
+    idleTimer.current = setTimeout(stop, 120000);
+  }, [fail, stop]);
 
   const pause = useCallback(
     async (paused: boolean) => {
@@ -344,10 +467,12 @@ export function useOrbis(accessCode: string) {
   }, [stop]);
   return {
     stream,
-    status,
+    status: stageStarted === null ? status : `${status} (${elapsed}s)`,
     error,
     promptStatus,
     steer,
+    prepare,
+    resetStory,
     pause,
     stop,
     waitForPicture,

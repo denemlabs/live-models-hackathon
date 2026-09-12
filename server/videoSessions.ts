@@ -162,7 +162,7 @@ export class VideoSessions {
             "The video account did not return a session token.",
           );
         // A just-terminated GPU session may take a moment to release its quota.
-        const attempts = provider === previousProvider ? 10 : 1;
+        const attempts = provider === previousProvider ? 3 : 1;
         for (let attempt = 0; attempt < attempts; attempt++) {
           const response = await this.request(`${API}/sessions`, {
             method: "POST",

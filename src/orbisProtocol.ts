@@ -46,18 +46,27 @@ export async function checkedCommand(
       message.type === "command_error" &&
       (!message.command || message.command === command)
     )
-      finish(null);
+      finish(message);
   });
   const timer = setTimeout(() => finish(null), timeoutMs);
   const cancel = () => finish(null);
   signal?.addEventListener("abort", cancel, { once: true });
   try {
-    const raw = await transport.sendCommand(command, data);
+    const raw = await Promise.race([
+      transport.sendCommand(command, data),
+      confirmed,
+    ]);
     signal?.throwIfAborted();
     const response = raw == null ? await confirmed : modelMessage(raw);
     signal?.throwIfAborted();
     if (response?.type !== expected) {
-      throw new Error(`Orbis did not acknowledge ${command}.`);
+      throw Object.assign(new Error(`Orbis did not acknowledge ${command}.`), {
+        code:
+          response?.type === "command_error"
+            ? "MODEL_COMMAND_REJECTED"
+            : "COMMAND_TIMEOUT",
+        stage: command,
+      });
     }
     return response;
   } finally {
@@ -115,10 +124,13 @@ export async function startOrbisRun(
   }
 }
 
-export function orbisFailure(cause: unknown) {
+export function orbisFailure(cause: unknown, stage = "connection") {
   const rawCode =
     cause && typeof cause === "object"
-      ? (cause as { code?: unknown }).code
+      ? ((cause as { code?: unknown }).code ??
+        ((cause as { name?: unknown }).name === "TimeoutError"
+          ? "REQUEST_TIMEOUT"
+          : undefined))
       : undefined;
   const code =
     typeof rawCode === "string" && /^[A-Z_]{1,50}$/.test(rawCode)
@@ -131,6 +143,17 @@ export function orbisFailure(cause: unknown) {
       message:
         "Choose A new story in the other Little Wonder tab to release live video, then reconnect here. This picture is an illustration; your story is still available.",
     };
+  if (
+    code === "REQUEST_TIMEOUT" ||
+    code === "COMMAND_TIMEOUT" ||
+    code === "FIRST_FRAME_TIMEOUT" ||
+    code === "TimeoutError"
+  )
+    return {
+      code,
+      status: "Live video timed out",
+      message: `Orbis timed out during ${stage} (${code}). Reconnect to try again. The picture shown is an illustration.`,
+    };
   return code === "RATE_LIMITED"
     ? {
         code,
@@ -141,7 +164,6 @@ export function orbisFailure(cause: unknown) {
     : {
         code,
         status: "Video disconnected — illustration",
-        message:
-          "Live video couldn’t connect. The picture shown is an illustration. You can keep reading or reconnect.",
+        message: `Live video failed during ${stage} (${code}). The picture shown is an illustration. You can keep reading or reconnect.`,
       };
 }

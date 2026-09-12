@@ -181,6 +181,7 @@ export default function App() {
     setLastWords(words);
     const first = !pages.length;
     if (first) {
+      if (!demo && config?.reactor) void orbis.prepare();
       setOpening(true);
       setTopic(words);
     }
@@ -216,9 +217,6 @@ export default function App() {
         accessCode,
         controller.signal,
       );
-      if (generation !== requestGeneration.current) return;
-      if (first && !profile.reducedMotion)
-        await new Promise((resolve) => setTimeout(resolve, 900));
       if (generation !== requestGeneration.current) return;
       const isAside =
         result.page.responseKind === "answer" ||
@@ -258,6 +256,7 @@ export default function App() {
       setTimeout(() => bookRef.current?.focus(), 50);
     } catch (e) {
       if (generation === requestGeneration.current) {
+        if (first) orbis.stop();
         setError(
           e instanceof Error && e.name !== "AbortError"
             ? e.message
@@ -330,7 +329,7 @@ export default function App() {
     request.current?.abort();
     mic.cancel();
     mute();
-    orbis.stop();
+    orbis.resetStory();
     setInCall(false);
     setAside(null);
     setQuestionMode(false);
