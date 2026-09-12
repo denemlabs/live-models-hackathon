@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Reactor } from "@reactor-team/js-sdk";
 import { api } from "./api";
+import { acquireVideoSlot } from "./videoSlot";
 import {
   checkedCommand,
   ORBIS_TRACKS,
@@ -31,6 +32,8 @@ export function useOrbis(accessCode: string) {
   const [status, setStatus] = useState("Illustrated preview");
   const [error, setError] = useState("");
   const commandQueue = useRef(Promise.resolve());
+  const teardown = useRef(Promise.resolve());
+  const releaseSlot = useRef<(() => void) | null>(null);
   const stop = useCallback(() => {
     epoch.current++;
     controller.current.abort();
@@ -44,7 +47,18 @@ export function useOrbis(accessCode: string) {
     setStream(null);
     setStatus("Illustrated preview");
     setError("");
-    void old?.disconnect().catch(() => {});
+    const release = releaseSlot.current;
+    releaseSlot.current = null;
+    // Hold the cross-tab slot until Reactor has finished closing the old session.
+    teardown.current = teardown.current
+      .then(async () => {
+        try {
+          await old?.disconnect();
+        } finally {
+          release?.();
+        }
+      })
+      .catch(() => {});
   }, []);
   const fail = useCallback(
     (cause?: unknown) => {
@@ -93,6 +107,16 @@ export function useOrbis(accessCode: string) {
       setError("");
       setStatus("Waking up your living world…");
       try {
+        await teardown.current;
+        if (!currentSession()) return;
+        if (navigator.locks) {
+          const release = await acquireVideoSlot(navigator.locks);
+          if (!currentSession()) {
+            release();
+            return;
+          }
+          releaseSlot.current = release;
+        }
         const { jwt, model } = await api<{ jwt: string; model: string }>(
           "/api/reactor/token",
           {},

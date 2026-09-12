@@ -190,3 +190,31 @@ test("account session limits are actionable and never expose provider error bodi
   assert.ok(!JSON.stringify(failure).includes("private token"));
   assert.equal(orbisFailure({ code: "private token" }).code, "SESSION_ERROR");
 });
+
+test("a second browser tab cannot acquire the video slot until the owner releases it", async () => {
+  const { acquireVideoSlot } = await import("../src/videoSlot");
+  let held = false;
+  const locks = {
+    request: async (
+      _name: string,
+      _options: unknown,
+      callback: (lock: unknown) => Promise<void>,
+    ) => {
+      if (held) return callback(null);
+      held = true;
+      try {
+        await callback({});
+      } finally {
+        held = false;
+      }
+    },
+  } as unknown as Pick<LockManager, "request">;
+  const release = await acquireVideoSlot(locks);
+  await assert.rejects(acquireVideoSlot(locks), {
+    code: "VIDEO_IN_ANOTHER_TAB",
+  });
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const releaseNext = await acquireVideoSlot(locks);
+  releaseNext();
+});
