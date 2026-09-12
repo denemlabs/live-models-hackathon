@@ -137,3 +137,5 @@ The GitHub-connected Railway service deploys from `main`. `railway.json` specifi
 Set `OPENAI_API_KEY`, `REACTOR_API_KEY`, `ELEVENLABS_API_KEY`, and optionally `APP_ACCESS_CODE` in Railway’s service Variables. Local `.env` and `.env.local` files are ignored by Git and are not sent by the GitHub deployment. Without keys the deployed app runs in demo mode. Do not set `PORT` manually unless configuring a specific target port.
 
 Pin `ELEVENLABS_AGENT_ID` in Railway once the agent exists. Otherwise each fresh workspace provisions its own, and a deploy that cannot reach the ElevenLabs agents API will fail the first story call rather than the healthcheck.
+
+Live Orbis updates replace the model’s active prompt: each update sends the complete moderated scene with the requested visible action first. Custom spoken additions are preserved rather than matched to a preset option by one shared character name. The story screen shows the received answer and Orbis prompt acknowledgment; acknowledgment confirms delivery, not visual accuracy.

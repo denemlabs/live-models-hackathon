@@ -4,6 +4,7 @@ import { api } from "./api";
 import { PictureGate } from "./pictureGate";
 import {
   checkedCommand,
+  scenePrompt,
   ORBIS_TRACKS,
   orbisFailure,
   modelMessage,
@@ -163,7 +164,11 @@ export function useOrbis(accessCode: string) {
             if (!currentSession() || client.current !== current) return;
             if (!started.current) {
               progress("Starting the first picture…", "generation start");
-              await startOrbisRun(transportFor(current), prompt, signal);
+              await startOrbisRun(
+                transportFor(current),
+                scenePrompt(prompt, visualChange),
+                signal,
+              );
               if (currentSession()) {
                 started.current = true;
                 if (savedStream.current) {
@@ -187,7 +192,7 @@ export function useOrbis(accessCode: string) {
               await checkedCommand(
                 transportFor(current),
                 "set_prompt",
-                { prompt: visualChange.trim() || prompt },
+                { prompt: scenePrompt(prompt, visualChange) },
                 "prompt_accepted",
                 signal,
               );
@@ -334,7 +339,11 @@ export function useOrbis(accessCode: string) {
           return;
         }
         progress("Starting the first picture…", "generation start");
-        await startOrbisRun(transportFor(reactor), initialPrompt.full, signal);
+        await startOrbisRun(
+          transportFor(reactor),
+          scenePrompt(initialPrompt.full, initialPrompt.change),
+          signal,
+        );
         if (!currentSession()) return;
         started.current = true;
         if (savedStream.current) {
@@ -359,7 +368,7 @@ export function useOrbis(accessCode: string) {
           await checkedCommand(
             transportFor(reactor),
             "set_prompt",
-            { prompt: applied.full },
+            { prompt: scenePrompt(applied.full, applied.change) },
             "prompt_accepted",
             signal,
           );

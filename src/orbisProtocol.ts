@@ -1,3 +1,11 @@
+// set_prompt replaces the active prompt; retain the complete scene and make
+// the child's current visible action explicit on every update.
+export function scenePrompt(scene: string, change = "") {
+  return change.trim()
+    ? `Current visible action: ${change.trim()}\nScene: ${scene.trim()}`
+    : scene.trim();
+}
+
 // The session handshake must declare every Orbis track, even with audio disabled.
 export const ORBIS_TRACKS = [
   { name: "main_video", kind: "video", direction: "recvonly" },

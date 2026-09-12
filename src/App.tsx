@@ -188,6 +188,7 @@ export default function App({
     words: string,
     interaction: Interaction = questionMode ? "question" : "auto",
     choiceIndex?: number,
+    originalWords = words,
   ) {
     const calming = interaction === "calm" && !!page;
     if (!words.trim() || ((busy || paused) && !calming)) return;
@@ -208,7 +209,7 @@ export default function App({
     setBusy(true);
     setTyping(false);
     if (designPreview) setPreviewStage(pages.length ? "adapting" : "preparing");
-    setLastWords(words);
+    setLastWords(originalWords);
     const first = !pages.length;
     if (first) {
       if (!demo && config?.reactor) void orbis.prepare();
@@ -364,7 +365,8 @@ export default function App({
       page && !aside && !questionMode
         ? spokenChoice(words, page.choices)
         : undefined;
-    if (index !== undefined) void tell(page.choices[index], "continue", index);
+    if (index !== undefined)
+      void tell(page.choices[index], "continue", index, words);
     else void tell(words);
   }
   function toggleMic() {
@@ -775,6 +777,14 @@ export default function App({
                         : "We’re making room for your idea…"}
                 </div>
               )}
+            {page && lastWords && !typing && !designPreview && (
+              <div className="answer-receipt float-surface" role="status">
+                <span>Your answer: “{lastWords}”</span>
+                {!demo && !orbis.error && orbis.promptStatus && (
+                  <small>{orbis.promptStatus}</small>
+                )}
+              </div>
+            )}
             {page && (
               <StoryCaption
                 key={pageIndex + (aside || page).narrative}

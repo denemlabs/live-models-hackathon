@@ -2,12 +2,37 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   checkedCommand,
+  scenePrompt,
   ORBIS_TRACKS,
   orbisFailure,
   modelMessage,
   startOrbisRun,
   type OrbisTransport,
 } from "../src/orbisProtocol";
+
+test("live prompt replacement retains the scene and explicitly sends the new action", async () => {
+  const scene =
+    "A little green frog above a pond, watercolor style, gentle camera.";
+  const action = "The green frog flies through the air above the water.";
+  let sent: Record<string, unknown> | undefined;
+  const transport: OrbisTransport = {
+    onMessage: () => () => {},
+    sendCommand: async (command, data) => {
+      assert.equal(command, "set_prompt");
+      sent = data;
+      return { type: "prompt_accepted" };
+    },
+  };
+  await checkedCommand(
+    transport,
+    "set_prompt",
+    { prompt: scenePrompt(scene, action) },
+    "prompt_accepted",
+  );
+  assert.ok(String(sent?.prompt).includes(scene));
+  assert.ok(String(sent?.prompt).includes(action));
+  assert.equal(scenePrompt(scene), scene);
+});
 
 function fakeTransport(
   handler: (

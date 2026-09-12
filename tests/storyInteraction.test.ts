@@ -37,6 +37,19 @@ test("ambiguous answers, questions and new ideas never silently select a choice"
     assert.equal(spokenChoice(answer, choices), undefined, answer);
   assert.equal(spokenChoice("one", []), undefined);
 });
+test("custom flying-frog answers keep every word instead of becoming a preset choice", () => {
+  const options = ["The frog hops onto a lily pad", "The turtle swims home"];
+  for (const answer of [
+    "Make the frog fly",
+    "I want the frog flying",
+    "The frog hops onto a lily pad and then flies into the sky",
+    "the turtle can fly",
+    "one but make the frog fly",
+  ])
+    assert.equal(spokenChoice(answer, options), undefined, answer);
+  assert.equal(spokenChoice("the frog please", options), 0);
+  assert.equal(spokenChoice("two", options), 1);
+});
 test("narration reads the whole visible story, question and both numbered options", () => {
   const page = demoPage(
     StoryRequestSchema.parse({

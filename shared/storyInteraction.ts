@@ -26,15 +26,18 @@ export function spokenChoice(
   if (/^(why|how|what|who|where|when|does|is|are)\b/.test(answer)) return;
   const normalized = choices.map(normalize);
   const exact = normalized.flatMap((choice, i) =>
-    choice === answer || answer.includes(choice) ? [i] : [],
+    choice === answer ? [i] : [],
   );
   if (exact.length === 1) return exact[0];
-  const words = new Set(
-    answer.split(" ").filter((word) => word.length > 3 && !fillers.has(word)),
-  );
+  const words = new Set(answer.split(" ").filter((word) => !fillers.has(word)));
   const matches = normalized.flatMap((choice, i) => {
     const other = new Set(normalized[1 - i].split(" "));
-    return choice.split(" ").some((word) => words.has(word) && !other.has(word))
+    const optionWords = new Set(choice.split(" "));
+    // A new verb, attribute or extra action belongs to the child, not to a
+    // preset option. Never discard it because a character name also matched.
+    return words.size > 0 &&
+      [...words].every((word) => optionWords.has(word)) &&
+      [...words].some((word) => !other.has(word))
       ? [i]
       : [];
   });

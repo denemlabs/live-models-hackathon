@@ -1921,3 +1921,20 @@ dialog::backdrop {
   min-height: 64px;
   font-size: 16px;
 }
+
+.answer-receipt {
+  padding: 9px 14px;
+  border-radius: 16px;
+  font-size: 12px;
+  max-height: 72px;
+  overflow: auto;
+  color: #fff9e9;
+}
+.answer-receipt span,
+.answer-receipt small {
+  display: block;
+}
+.answer-receipt small {
+  opacity: 0.8;
+  margin-top: 4px;
+}
