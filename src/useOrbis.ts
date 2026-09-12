@@ -23,7 +23,7 @@ function transportFor(reactor: Reactor): OrbisTransport {
 export function useOrbis(accessCode: string) {
   const client = useRef<Reactor | null>(null);
   const epoch = useRef(0);
-  const pending = useRef("");
+  const pending = useRef({ full: "", change: "" });
   const connecting = useRef(false);
   const started = useRef(false);
   const controller = useRef(new AbortController());
@@ -37,7 +37,7 @@ export function useOrbis(accessCode: string) {
     controller.current = new AbortController();
     connecting.current = false;
     started.current = false;
-    pending.current = "";
+    pending.current = { full: "", change: "" };
     commandQueue.current = Promise.resolve();
     const old = client.current;
     client.current = null;
@@ -59,8 +59,8 @@ export function useOrbis(accessCode: string) {
   );
 
   const steer = useCallback(
-    async (prompt: string) => {
-      pending.current = prompt;
+    async (prompt: string, visualChange = "") => {
+      pending.current = { full: prompt, change: visualChange };
       if (connecting.current) return;
       const generation = epoch.current;
       const currentSession = () => epoch.current === generation;
@@ -77,7 +77,7 @@ export function useOrbis(accessCode: string) {
               await checkedCommand(
                 transportFor(current),
                 "set_prompt",
-                { prompt },
+                { prompt: visualChange.trim() || prompt },
                 "prompt_accepted",
                 signal,
               );
@@ -158,18 +158,19 @@ export function useOrbis(accessCode: string) {
         if (!currentSession()) return;
         const initialPrompt = pending.current;
         setStatus("Waiting for the first living picture…");
-        await startOrbisRun(transportFor(reactor), initialPrompt, signal);
+        await startOrbisRun(transportFor(reactor), initialPrompt.full, signal);
         if (!currentSession()) return;
         started.current = true;
         // A second story page can arrive while the initial prompt is being prepared.
-        // Drain changes before releasing the connection lock so none are dropped.
+        // Startup can coalesce several turns, so use the latest complete scene here.
+        // Once connected, ordinary updates use only the visible transition.
         let applied = initialPrompt;
         while (currentSession() && pending.current !== applied) {
           applied = pending.current;
           await checkedCommand(
             transportFor(reactor),
             "set_prompt",
-            { prompt: applied },
+            { prompt: applied.full },
             "prompt_accepted",
             signal,
           );

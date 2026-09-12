@@ -6,7 +6,8 @@ import { zodTextFormat } from "openai/helpers/zod";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
-  PageSchema,
+  GeneratedPageSchema,
+  finalizePage,
   StoryRequestSchema,
   demoPage,
   storyInstructions,
@@ -120,11 +121,9 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!controller.signal.aborted) res.type("audio/mpeg").send(audio);
     } catch {
       if (!controller.signal.aborted)
-        res
-          .status(502)
-          .json({
-            error: "Narration couldn’t connect. You can use the browser voice.",
-          });
+        res.status(502).json({
+          error: "Narration couldn’t connect. You can use the browser voice.",
+        });
     } finally {
       res.off("close", disconnected);
     }
@@ -172,10 +171,12 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
               topic: data.topic || data.input,
               previousPages: data.history,
               childSays: data.input,
+              interaction: data.interaction,
+              recentQuestions: data.conversation,
             }),
           },
         ],
-        text: { format: zodTextFormat(PageSchema, "storybook_page") },
+        text: { format: zodTextFormat(GeneratedPageSchema, "storybook_page") },
         max_output_tokens: 1400,
       });
       const page = response.output_parsed;
@@ -195,7 +196,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
           .json({ error: "Let’s try a gentler turn for this story." });
         return;
       }
-      res.json({ page, mode: "live" });
+      res.json({ page: finalizePage(page, data), mode: "live" });
     } catch {
       res.status(502).json({
         error:

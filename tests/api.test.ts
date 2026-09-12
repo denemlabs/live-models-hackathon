@@ -3,7 +3,13 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { createApp } from "../server/app";
-import { demoPage, ProfileSchema, storyInstructions } from "../shared/story";
+import {
+  demoPage,
+  ProfileSchema,
+  StoryRequestSchema,
+  finalizePage,
+  storyInstructions,
+} from "../shared/story";
 
 const profile = ProfileSchema.parse({});
 async function withServer(
@@ -127,7 +133,11 @@ test("recording endpoint rejects unsupported content before provider calls", asy
   });
 });
 test("young-reader and accessibility preferences shorten text and shape prompt constraints", () => {
-  const data = { input: "forest", topic: "", history: [], profile, demo: true };
+  const data = StoryRequestSchema.parse({
+    input: "forest",
+    profile,
+    demo: true,
+  });
   assert.ok(
     demoPage({ ...data, profile: { ...profile, simpleLanguage: true } })
       .narrative.length < demoPage(data).narrative.length,
@@ -293,4 +303,83 @@ test("narration returns audio while keeping provider keys and failures private",
   } finally {
     globalThis.fetch = original;
   }
+});
+
+test("questions preserve the scene and explicit modes override model routing", () => {
+  const start = StoryRequestSchema.parse({
+    input: "moon rabbit",
+    profile,
+    demo: true,
+  });
+  const first = demoPage(start);
+  const question = StoryRequestSchema.parse({
+    ...start,
+    input: "Why does the moon shine?",
+    history: [first],
+    interaction: "question",
+  });
+  const answer = demoPage(question);
+  assert.equal(answer.responseKind, "answer");
+  assert.match(answer.narrative, /Sunlight/);
+  assert.equal(answer.visualPrompt, first.visualPrompt);
+  assert.equal(answer.visualChange, "");
+  const corrected = finalizePage(
+    {
+      ...answer,
+      responseKind: "story",
+      theme: "forest",
+      title: "Wrong title",
+      visualPrompt: "Wrong scene",
+    },
+    question,
+  );
+  assert.equal(corrected.responseKind, "answer");
+  assert.equal(corrected.title, first.title);
+  assert.equal(corrected.theme, first.theme);
+  assert.equal(corrected.visualPrompt, first.visualPrompt);
+  const continuation = demoPage({
+    ...question,
+    input: "Find a friend",
+    interaction: "continue",
+  });
+  assert.equal(continuation.responseKind, "story");
+  assert.ok(continuation.visualChange);
+});
+
+test("calm, simpler words, and endings are separate story actions", async () => {
+  await withServer({}, async (base) => {
+    const initial = await (
+      await post(`${base}/api/story`, { input: "forest", profile, demo: true })
+    ).json();
+    for (const [interaction, kind] of [
+      ["calm", "calm"],
+      ["simplify", "simplify"],
+      ["ending", "ending"],
+    ]) {
+      const response = await post(`${base}/api/story`, {
+        input: "Please help",
+        profile,
+        demo: true,
+        history: [initial.page],
+        interaction,
+      });
+      assert.equal(response.status, 200);
+      const { page } = await response.json();
+      assert.equal(page.responseKind, kind);
+      assert.equal(page.title, initial.page.title);
+      if (kind === "simplify") assert.equal(page.visualChange, "");
+      if (kind === "ending") assert.match(page.narrative, /The end/);
+    }
+    assert.equal(
+      (
+        await post(`${base}/api/story`, {
+          input: "forest",
+          profile,
+          demo: true,
+          interaction: "execute-code",
+        })
+      ).status,
+      400,
+    );
+  });
 });
