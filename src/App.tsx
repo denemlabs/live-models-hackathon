@@ -58,7 +58,7 @@ import { api } from "./api";
 import { useOrbis } from "./useOrbis";
 import { useMicrophone } from "./useMicrophone";
 import { useNarration } from "./useNarration";
-import { updateStoryPicture } from "./storyPicture";
+import { appearanceAnswer, updateStoryPicture } from "./storyPicture";
 
 // The ElevenLabs WebRTC client is only needed once a child places a call.
 const StoryCall = lazy(() => import("./StoryCall"));
@@ -236,7 +236,7 @@ export default function App({
         interaction === "continue" && !demo && config?.reactor
           ? choiceVisualFor(page, choiceIndex, words)
           : undefined;
-      if (preparedChoice)
+      if (preparedChoice && !appearanceAnswer(words))
         void orbis.steer(preparedChoice.scene, preparedChoice.change);
       const result = designPreview
         ? await (async () => {
@@ -288,7 +288,7 @@ export default function App({
         setPaused(true);
       }
       if (!isAside && !isCalm && !demo && config?.reactor)
-        updateStoryPicture(orbis, result.page, first, !!preparedChoice);
+        updateStoryPicture(orbis, result.page, first, !!preparedChoice, words);
       setInput("");
       setTyping(false);
       setOpening(false);

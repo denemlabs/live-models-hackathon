@@ -136,7 +136,7 @@ export function useOrbis(accessCode: string) {
       const scene = { full: prompt, change: visualChange };
       pending.current = scene;
       setPromptStatus(
-        visualChange
+        prompt
           ? connecting.current
             ? "Your picture is queued while the video connects…"
             : "Sending your picture request…"
@@ -147,7 +147,7 @@ export function useOrbis(accessCode: string) {
       const currentSession = () => epoch.current === generation;
       const signal = controller.current.signal;
       const acknowledged = (applied: typeof scene) => {
-        if (currentSession() && pending.current === applied && applied.change)
+        if (currentSession() && pending.current === applied && applied.full)
           setPromptStatus(
             "Picture request delivered. If it still looks wrong, try Regenerate picture.",
           );
@@ -412,6 +412,9 @@ export function useOrbis(accessCode: string) {
           "generation_reset",
           controller.current.signal,
         );
+        // A state event from the previous run may have arrived while reset
+        // was in flight. The next queued scene must still execute start.
+        if (generation === epoch.current) started.current = false;
       })
       .catch((cause) => {
         if (generation === epoch.current) fail(cause);

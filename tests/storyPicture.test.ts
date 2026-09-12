@@ -61,3 +61,23 @@ test("ordinary movements retain the run and prepared choices are not sent twice"
   updateStoryPicture(pictures, page, true, false);
   assert.deepEqual(calls, ["steer", "steer"]);
 });
+
+test("the exact pink answer redraws even when the model misses the redraw flag", () => {
+  const calls: string[] = [];
+  updateStoryPicture(
+    {
+      resetStory: () => {
+        calls.push("reset");
+      },
+      steer: (scene) => {
+        assert.match(scene, /pink/);
+        calls.push("steer");
+      },
+    },
+    { ...page, visualUpdate: "continue", visualChange: "" },
+    false,
+    false,
+    "I think they are pink.",
+  );
+  assert.deepEqual(calls, ["reset", "steer"]);
+});
