@@ -9,6 +9,7 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
   GeneratedPageSchema,
+  choiceVisualFor,
   finalizePage,
   StoryRequestSchema,
   demoPage,
@@ -181,6 +182,14 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
               previousPages: data.history,
               childSays: data.input,
               interaction: data.interaction,
+              selectedChoiceVisual:
+                data.interaction === "continue"
+                  ? choiceVisualFor(
+                      data.history.at(-1),
+                      data.choiceIndex,
+                      data.input,
+                    )
+                  : undefined,
               recentQuestions: data.conversation,
             }),
           },
@@ -192,6 +201,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (
         !page ||
         ![0, 2].includes(page.choices.length) ||
+        page.choiceVisuals.length !== page.choices.length ||
         page.choices.some((choice) => !choice.trim())
       ) {
         res.status(422).json({
@@ -199,9 +209,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         });
         return;
       }
+      const finalPage = finalizePage(page, data);
       const checked = await openai.moderations.create({
         model: "omni-moderation-latest",
-        input: JSON.stringify(page),
+        input: JSON.stringify(finalPage),
       });
       if (checked.results.some((r) => r.flagged)) {
         res
@@ -209,7 +220,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
           .json({ error: "Let’s try a gentler turn for this story." });
         return;
       }
-      res.json({ page: finalizePage(page, data), mode: "live" });
+      res.json({ page: finalPage, mode: "live" });
     } catch {
       res.status(502).json({
         error:

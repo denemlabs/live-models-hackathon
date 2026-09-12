@@ -30,6 +30,7 @@ export function useOrbis(accessCode: string) {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [status, setStatus] = useState("Illustrated preview");
   const [error, setError] = useState("");
+  const [promptStatus, setPromptStatus] = useState("");
   const commandQueue = useRef(Promise.resolve());
   const teardown = useRef(Promise.resolve());
   const lease = useRef<string | null>(null);
@@ -46,6 +47,7 @@ export function useOrbis(accessCode: string) {
     setStream(null);
     setStatus("Illustrated preview");
     setError("");
+    setPromptStatus("");
     const oldLease = lease.current;
     lease.current = null;
     // Send cleanup immediately, including during pagehide. The backend owns
@@ -79,11 +81,25 @@ export function useOrbis(accessCode: string) {
 
   const steer = useCallback(
     async (prompt: string, visualChange = "") => {
-      pending.current = { full: prompt, change: visualChange };
+      const scene = { full: prompt, change: visualChange };
+      pending.current = scene;
+      setPromptStatus(
+        visualChange
+          ? connecting.current
+            ? "Your choice is queued while the live pictures connect…"
+            : "Sending your choice to Orbis…"
+          : "",
+      );
       if (connecting.current) return;
       const generation = epoch.current;
       const currentSession = () => epoch.current === generation;
       const signal = controller.current.signal;
+      const acknowledged = (applied: typeof scene) => {
+        if (currentSession() && pending.current === applied && applied.change)
+          setPromptStatus(
+            "Orbis accepted your choice. The picture may take a moment to change.",
+          );
+      };
       if (client.current) {
         const current = client.current;
         commandQueue.current = commandQueue.current
@@ -101,6 +117,7 @@ export function useOrbis(accessCode: string) {
                 signal,
               );
             }
+            acknowledged(scene);
           })
           .catch((cause) => {
             if (currentSession()) fail(cause);
@@ -213,6 +230,7 @@ export function useOrbis(accessCode: string) {
         await startOrbisRun(transportFor(reactor), initialPrompt.full, signal);
         if (!currentSession()) return;
         started.current = true;
+        acknowledged(initialPrompt);
         // A second story page can arrive while the initial prompt is being prepared.
         // Startup can coalesce several turns, so use the latest complete scene here.
         // Once connected, ordinary updates use only the visible transition.
@@ -226,6 +244,7 @@ export function useOrbis(accessCode: string) {
             "prompt_accepted",
             signal,
           );
+          acknowledged(applied);
         }
       } catch (cause) {
         if (currentSession()) fail(cause);
@@ -290,5 +309,5 @@ export function useOrbis(accessCode: string) {
       stop();
     };
   }, [stop]);
-  return { stream, status, error, steer, pause, stop };
+  return { stream, status, error, promptStatus, steer, pause, stop };
 }
