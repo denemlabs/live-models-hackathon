@@ -48,7 +48,7 @@ Optional configuration:
 | `PORT`                    | `3000`                       | Local server port                                                 |
 | `APP_ACCESS_CODE`         | unset                        | Shared code required by API endpoints; enter in Grown-up settings |
 
-Open **Grown-up settings** to allow live processing and select age, storyteller voice, simpler language, larger text, reduced motion, and narration. Two voices are offered, Arthur and Victoria, and the chosen one reads the storybook pages and speaks on a story call, so a child hears one narrator throughout. Without a Reactor key, GPT stories and voice still work with illustrated previews. An API failure is shown explicitly; live requests do not silently fall back to demo output.
+Open **Grown-up settings** to allow live processing and select age, storyteller voice, simpler language, larger text, reduced motion, and narration. Two voices are offered, Arthur and Victoria, and the chosen one reads the storybook pages and speaks on a story call, so a child hears one narrator throughout. Both are ElevenLabs default voices, because a free plan is refused any voice taken from the shared library. Default voices are due to expire on 31 December 2026, so both will need replacing with owned voices before then. Without a Reactor key, GPT stories and voice still work with illustrated previews. An API failure is shown explicitly; live requests do not silently fall back to demo output.
 
 ## How it works
 

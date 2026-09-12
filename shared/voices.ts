@@ -2,18 +2,20 @@ import { z } from "zod";
 
 // The storyteller voices a grown-up can pick between. The same voice reads the
 // storybook pages and speaks on a story call, so a child hears one narrator.
+// Both are ElevenLabs default voices, which every plan can speak with. Library
+// voices are rejected on a free plan, so they cannot be offered here.
 export const STORY_VOICES = [
   {
     key: "arthur",
-    id: "C1npRmjB19a6yNkEucvx",
+    id: "JBFqnCBsd6RMkjVDRZzb", // ElevenLabs "George"
     label: "Arthur",
     detail: "A warm, unhurried grandfather.",
   },
   {
     key: "victoria",
-    id: "qSeXEcewz7tA0Q0qk9fH",
+    id: "EXAVITQu4vr4xnSDxMaL", // ElevenLabs "Sarah"
     label: "Victoria",
-    detail: "A bright, gentle storyteller.",
+    detail: "A soft, kindly storyteller.",
   },
 ] as const;
 
