@@ -15,12 +15,20 @@ export function usePictureFrame(
         player.srcObject === stream &&
         player.videoWidth > 0 &&
         !player.paused
-      )
+      ) {
         onReady(stream);
+        return true;
+      }
+      return false;
     };
     // This callback confirms a decoded frame was submitted for presentation.
     if (player.requestVideoFrameCallback) {
-      const id = player.requestVideoFrameCallback(ready);
+      let id: number;
+      const frame = () => {
+        if (!cancelled && !ready())
+          id = player.requestVideoFrameCallback(frame);
+      };
+      id = player.requestVideoFrameCallback(frame);
       return () => {
         cancelled = true;
         player.cancelVideoFrameCallback(id);
