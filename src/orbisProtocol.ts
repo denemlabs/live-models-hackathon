@@ -124,12 +124,19 @@ export function orbisFailure(cause: unknown) {
     typeof rawCode === "string" && /^[A-Z_]{1,50}$/.test(rawCode)
       ? rawCode
       : "SESSION_ERROR";
+  if (code === "VIDEO_IN_ANOTHER_TAB")
+    return {
+      code,
+      status: "Live video is open in another tab",
+      message:
+        "Choose A new story in the other Little Wonder tab to release live video, then reconnect here. This picture is an illustration; your story is still available.",
+    };
   return code === "RATE_LIMITED"
     ? {
         code,
         status: "Video session limit reached",
         message:
-          "Reactor is limiting new video sessions for this account. Close unused Reactor sessions or wait, then reconnect. This picture is an illustration; your story is still available.",
+          "This Reactor account allows one concurrent generation. Close unused Reactor sessions or wait for them to finish, then reconnect. Check other story tabs, localhost, and the Reactor sandbox. This picture is an illustration; your story is still available.",
       }
     : {
         code,

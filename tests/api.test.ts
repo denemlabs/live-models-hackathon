@@ -383,3 +383,55 @@ test("calm, simpler words, and endings are separate story actions", async () => 
     );
   });
 });
+
+test("backup token uses only the backup credential and rejects unknown providers", async () => {
+  const original = globalThis.fetch;
+  const used: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    if (String(input) === "https://api.reactor.inc/tokens") {
+      used.push((init!.headers as Record<string, string>)["Reactor-API-Key"]);
+      return new Response(JSON.stringify({ jwt: "scoped-session-token" }), {
+        status: 200,
+      });
+    }
+    return original(input, init);
+  };
+  try {
+    await withServer(
+      {
+        REACTOR_API_KEY: "primary-secret",
+        REACTOR_API_KEY_BACKUP: "backup-secret",
+      },
+      async (base) => {
+        for (const provider of ["primary", "backup"]) {
+          const response = await post(`${base}/api/reactor/token`, {
+            provider,
+          });
+          assert.equal(response.status, 200);
+          const data = await response.json();
+          assert.equal(data.backupAvailable, true);
+          assert.ok(!JSON.stringify(data).includes("secret"));
+        }
+        assert.equal(
+          (
+            await post(`${base}/api/reactor/token`, {
+              provider: "arbitrary-key",
+            })
+          ).status,
+          400,
+        );
+        assert.deepEqual(used, ["primary-secret", "backup-secret"]);
+      },
+    );
+    await withServer({ REACTOR_API_KEY: "primary-secret" }, async (base) => {
+      assert.equal(
+        (await post(`${base}/api/reactor/token`, { provider: "backup" }))
+          .status,
+        503,
+      );
+      assert.equal(used.length, 2);
+    });
+  } finally {
+    globalThis.fetch = original;
+  }
+});
