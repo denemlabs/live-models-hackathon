@@ -244,8 +244,19 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       });
     }
   });
-  app.post("/api/reactor/token", async (_req, res) => {
-    if (!env.REACTOR_API_KEY) {
+  app.post("/api/reactor/token", async (req, res) => {
+    const selected = z
+      .object({ provider: z.enum(["primary", "backup"]).default("primary") })
+      .safeParse(req.body ?? {});
+    if (!selected.success) {
+      res.status(400).json({ error: "Choose a valid video connection." });
+      return;
+    }
+    const reactorKey =
+      selected.data.provider === "backup"
+        ? env.REACTOR_API_KEY_BACKUP
+        : env.REACTOR_API_KEY;
+    if (!reactorKey) {
       res.status(503).json({ error: "Live pictures need a Reactor API key." });
       return;
     }
@@ -254,7 +265,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       const response = await fetch("https://api.reactor.inc/tokens", {
         method: "POST",
         headers: {
-          "Reactor-API-Key": env.REACTOR_API_KEY,
+          "Reactor-API-Key": reactorKey,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
@@ -272,7 +283,11 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (!response.ok) throw new Error("Token failed");
       const token = (await response.json()) as { jwt?: string };
       if (!token.jwt) throw new Error("Missing token");
-      res.json({ jwt: token.jwt, model });
+      res.json({
+        jwt: token.jwt,
+        model,
+        backupAvailable: !!env.REACTOR_API_KEY_BACKUP,
+      });
     } catch {
       res.status(502).json({
         error:

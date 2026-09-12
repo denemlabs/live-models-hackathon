@@ -218,3 +218,69 @@ test("a second browser tab cannot acquire the video slot until the owner release
   const releaseNext = await acquireVideoSlot(locks);
   releaseNext();
 });
+
+test("busy primary falls back once, after cleanup, and respects cancellation", async () => {
+  const { connectWithBackup } = await import("../src/videoFallback");
+  const events: string[] = [];
+  const value = await connectWithBackup(
+    async (provider) => {
+      events.push(provider);
+      if (provider === "primary") {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        events.push("primary released");
+        throw { code: "RATE_LIMITED" };
+      }
+      return "backup connected";
+    },
+    () => true,
+    new AbortController().signal,
+    () => events.push("fallback"),
+  );
+  assert.equal(value, "backup connected");
+  assert.deepEqual(events, [
+    "primary",
+    "primary released",
+    "fallback",
+    "backup",
+  ]);
+  const abort = new AbortController();
+  const calls: string[] = [];
+  await assert.rejects(
+    connectWithBackup(
+      async (provider) => {
+        calls.push(provider);
+        abort.abort();
+        throw { code: "RATE_LIMITED" };
+      },
+      () => true,
+      abort.signal,
+      () => {},
+    ),
+    { name: "AbortError" },
+  );
+  assert.deepEqual(calls, ["primary"]);
+});
+
+test("fallback only handles capacity failures and never loops across accounts", async () => {
+  const { connectWithBackup } = await import("../src/videoFallback");
+  for (const [code, available, expected] of [
+    ["UNAUTHORIZED", true, 1],
+    ["RATE_LIMITED", false, 1],
+    ["RATE_LIMITED", true, 2],
+    ["VIDEO_IN_ANOTHER_TAB", true, 2],
+  ] as const) {
+    let attempts = 0;
+    await assert.rejects(
+      connectWithBackup(
+        async () => {
+          attempts++;
+          throw { code };
+        },
+        () => available,
+        new AbortController().signal,
+        () => {},
+      ),
+    );
+    assert.equal(attempts, expected);
+  }
+});

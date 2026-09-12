@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Reactor } from "@reactor-team/js-sdk";
 import { api } from "./api";
 import { acquireVideoSlot } from "./videoSlot";
+import { connectWithBackup } from "./videoFallback";
 import {
   checkedCommand,
   ORBIS_TRACKS,
@@ -109,76 +110,133 @@ export function useOrbis(accessCode: string) {
       try {
         await teardown.current;
         if (!currentSession()) return;
-        if (navigator.locks) {
-          const release = await acquireVideoSlot(navigator.locks);
-          if (!currentSession()) {
-            release();
-            return;
-          }
-          releaseSlot.current = release;
-        }
-        const { jwt, model } = await api<{ jwt: string; model: string }>(
-          "/api/reactor/token",
-          {},
-          accessCode,
-          AbortSignal.any([signal, AbortSignal.timeout(20000)]),
+        let backupAvailable = false;
+        const reactor = await connectWithBackup(
+          async (provider) => {
+            signal.throwIfAborted();
+            const token = await api<{
+              jwt: string;
+              model: string;
+              backupAvailable: boolean;
+            }>(
+              "/api/reactor/token",
+              { provider },
+              accessCode,
+              AbortSignal.any([signal, AbortSignal.timeout(20000)]),
+            );
+            backupAvailable = token.backupAvailable;
+            signal.throwIfAborted();
+            let attemptClient: Reactor | null = null;
+            let release: (() => void) | undefined;
+            try {
+              if (navigator.locks) {
+                release = await acquireVideoSlot(navigator.locks, provider);
+                if (!currentSession()) {
+                  release();
+                  signal.throwIfAborted();
+                }
+                releaseSlot.current = release;
+              }
+              const { Reactor } = await import("@reactor-team/js-sdk");
+              signal.throwIfAborted();
+              const reactor = new Reactor({
+                modelName: token.model,
+                apiUrl: "https://api.reactor.inc",
+                logLevel: "off",
+                readyTimeoutMs: 240000,
+                modelTracks: [...ORBIS_TRACKS],
+              });
+              attemptClient = reactor;
+              client.current = reactor;
+              let establishing = true;
+              const currentAttempt = () =>
+                currentSession() && client.current === reactor;
+              reactor.on("trackReceived", (name, _track, media) => {
+                if (currentAttempt() && name === "main_video") setStream(media);
+              });
+              reactor.on("error", (cause) => {
+                if (currentAttempt() && !establishing) fail(cause);
+              });
+              reactor.on("message", (raw) => {
+                if (!currentAttempt()) return;
+                const message = modelMessage(raw);
+                switch (message.type) {
+                  case "command_error":
+                    fail({ code: "MODEL_COMMAND_REJECTED" });
+                    break;
+                  case "generation_started":
+                    started.current = true;
+                    setStatus("Waiting for the first living picture…");
+                    break;
+                  case "generation_complete":
+                  case "generation_reset":
+                    started.current = false;
+                    setStatus("Ready for the next scene");
+                    break;
+                  case "generation_paused":
+                    setStatus("Pictures paused");
+                    break;
+                  case "generation_resumed":
+                    setStatus(
+                      provider === "backup"
+                        ? "Live pictures · backup"
+                        : "Live pictures",
+                    );
+                    break;
+                  case "chunk_complete":
+                    if (
+                      typeof message.frames_emitted === "number" &&
+                      message.frames_emitted > 0
+                    )
+                      setStatus(
+                        provider === "backup"
+                          ? "Live pictures · backup"
+                          : "Live pictures",
+                      );
+                    break;
+                  case "state":
+                    if (typeof message.started === "boolean")
+                      started.current = message.started;
+                    break;
+                }
+              });
+              reactor.on("statusChanged", (state) => {
+                if (
+                  currentAttempt() &&
+                  !establishing &&
+                  state === "disconnected"
+                )
+                  fail();
+              });
+
+              await reactor.connect(token.jwt);
+              establishing = false;
+              signal.throwIfAborted();
+              return reactor;
+            } catch (cause) {
+              if (currentSession()) {
+                // Detach listeners before closing; this failed attempt must not
+                // abort the next account's connection or overwrite its status.
+                if (client.current === attemptClient) client.current = null;
+                if (releaseSlot.current === release) releaseSlot.current = null;
+                try {
+                  await attemptClient?.disconnect();
+                } finally {
+                  release?.();
+                  setStream(null);
+                  started.current = false;
+                }
+              } else {
+                await teardown.current;
+              }
+              throw cause;
+            }
+          },
+          () => backupAvailable,
+          signal,
+          () =>
+            setStatus("First connection is busy. Trying backup live pictures…"),
         );
-        if (!currentSession()) return;
-        const { Reactor } = await import("@reactor-team/js-sdk");
-        if (!currentSession()) return;
-        const reactor = new Reactor({
-          modelName: model,
-          apiUrl: "https://api.reactor.inc",
-          logLevel: "off",
-          readyTimeoutMs: 240000,
-          modelTracks: [...ORBIS_TRACKS],
-        });
-        client.current = reactor;
-        reactor.on("trackReceived", (name, _track, media) => {
-          if (currentSession() && name === "main_video") setStream(media);
-        });
-        reactor.on("error", (cause) => {
-          if (currentSession()) fail(cause);
-        });
-        reactor.on("message", (raw) => {
-          if (!currentSession()) return;
-          const message = modelMessage(raw);
-          switch (message.type) {
-            case "command_error":
-              fail({ code: "MODEL_COMMAND_REJECTED" });
-              break;
-            case "generation_started":
-              started.current = true;
-              setStatus("Waiting for the first living picture…");
-              break;
-            case "generation_complete":
-            case "generation_reset":
-              started.current = false;
-              setStatus("Ready for the next scene");
-              break;
-            case "generation_paused":
-              setStatus("Pictures paused");
-              break;
-            case "generation_resumed":
-              setStatus("Live pictures");
-              break;
-            case "chunk_complete":
-              if (
-                typeof message.frames_emitted === "number" &&
-                message.frames_emitted > 0
-              )
-                setStatus("Live pictures");
-              break;
-            case "state":
-              if (typeof message.started === "boolean")
-                started.current = message.started;
-              break;
-          }
-        });
-        reactor.on("statusChanged", (state) => {
-          if (currentSession() && state === "disconnected") fail();
-        });
-        await reactor.connect(jwt);
         if (!currentSession()) return;
         const initialPrompt = pending.current;
         setStatus("Waiting for the first living picture…");
