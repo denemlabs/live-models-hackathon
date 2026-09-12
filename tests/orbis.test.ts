@@ -190,3 +190,47 @@ test("account session limits are actionable and never expose provider error bodi
   assert.ok(!JSON.stringify(failure).includes("private token"));
   assert.equal(orbisFailure({ code: "private token" }).code, "SESSION_ERROR");
 });
+
+test("hung SDK commands are bounded by our deadline and unsubscribe", async () => {
+  const fake = fakeTransport(() => new Promise(() => {}));
+  await assert.rejects(
+    checkedCommand(
+      fake.transport,
+      "start",
+      {},
+      "generation_started",
+      undefined,
+      10,
+    ),
+    { code: "COMMAND_TIMEOUT" },
+  );
+  assert.equal(fake.listeners.size, 0);
+});
+
+test("cancelling a hung SDK command does not wait for the SDK", async () => {
+  const fake = fakeTransport(() => new Promise(() => {}));
+  const abort = new AbortController();
+  const running = checkedCommand(
+    fake.transport,
+    "start",
+    {},
+    "generation_started",
+    abort.signal,
+  );
+  const rejected = assert.rejects(running, { name: "AbortError" });
+  abort.abort();
+  await rejected;
+  assert.equal(fake.listeners.size, 0);
+});
+
+test("timeouts expose the failing stage and code without raw upstream details", () => {
+  for (const cause of [
+    { code: "REQUEST_TIMEOUT", message: "private token" },
+    { name: "TimeoutError" },
+  ]) {
+    const failure = orbisFailure(cause, "Orbis startup / WebRTC");
+    assert.match(failure.message, /Orbis startup \/ WebRTC/);
+    assert.match(failure.message, /REQUEST_TIMEOUT/);
+    assert.ok(!failure.message.includes("private token"));
+  }
+});

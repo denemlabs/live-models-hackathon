@@ -31,6 +31,7 @@ export function useStoryteller(options: {
   history: StoryPage[];
   onScene: (scene: SceneArgs) => void;
   onPage: (page: StoryPage) => void;
+  preparePictures: () => Promise<boolean>;
 }) {
   const { accessCode, profile, topic, history, onScene, onPage } = options;
   const [connecting, setConnecting] = useState(false);
@@ -43,8 +44,17 @@ export function useStoryteller(options: {
   const scene = useRef<SceneArgs | null>(null);
   const settle = useRef<ReturnType<typeof setTimeout> | null>(null);
   const captionId = useRef(0);
-  const latest = useRef({ onScene, onPage });
-  latest.current = { onScene, onPage };
+  const latest = useRef({
+    onScene,
+    onPage,
+    preparePictures: options.preparePictures,
+  });
+  latest.current = {
+    onScene,
+    onPage,
+    preparePictures: options.preparePictures,
+  };
+  const attempt = useRef(0);
 
   const settlePage = useCallback(() => {
     if (settle.current) clearTimeout(settle.current);
@@ -111,6 +121,7 @@ export function useStoryteller(options: {
 
   const { startSession, endSession } = conversation;
   const start = useCallback(async () => {
+    const current = ++attempt.current;
     setError("");
     setCaption(null);
     setConnecting(true);
@@ -118,21 +129,35 @@ export function useStoryteller(options: {
     pendingPage.current = null;
     scene.current = null;
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-      const session = await api<{
-        token: string;
-        overrides: CallOverrides | null;
-      }>(
-        "/api/storyteller/token",
-        { profile, topic, history: history.slice(-12) },
-        accessCode,
-      );
-      startSession({
+      const permission = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+      });
+      permission.getTracks().forEach((track) => track.stop());
+      if (current !== attempt.current) return;
+      const [session, picturesReady] = await Promise.all([
+        api<{
+          token: string;
+          overrides: CallOverrides | null;
+        }>(
+          "/api/storyteller/token",
+          { profile, topic, history: history.slice(-12) },
+          accessCode,
+        ),
+        latest.current.preparePictures(),
+      ]);
+      if (current !== attempt.current) return;
+      if (!picturesReady)
+        throw new Error(
+          "The live picture isn’t ready yet. Please reconnect the pictures, then try the call again.",
+        );
+      await startSession({
         conversationToken: session.token,
         connectionType: "webrtc",
         ...(session.overrides ? { overrides: session.overrides } : {}),
       });
+      if (current !== attempt.current) endSession();
     } catch (e) {
+      if (current !== attempt.current) return;
       setError(
         e instanceof DOMException
           ? "We need permission to use the microphone so the storyteller can hear you."
@@ -141,11 +166,13 @@ export function useStoryteller(options: {
             : "The storyteller couldn’t join just now. Please try again.",
       );
     } finally {
-      setConnecting(false);
+      if (current === attempt.current) setConnecting(false);
     }
-  }, [accessCode, history, profile, startSession, topic]);
+  }, [accessCode, history, profile, startSession, endSession, topic]);
 
   const hangUp = useCallback(() => {
+    attempt.current++;
+    setConnecting(false);
     if (settle.current) clearTimeout(settle.current);
     pendingPage.current = null;
     spoken.current = [];
@@ -154,6 +181,7 @@ export function useStoryteller(options: {
 
   useEffect(
     () => () => {
+      attempt.current++;
       if (settle.current) clearTimeout(settle.current);
       endSession();
     },

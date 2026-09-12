@@ -1,19 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Voice } from "../shared/voices";
+import { playWhenReady } from "./pictureGate";
 
 type Options = {
-  elevenlabs: boolean;
+  cloudVoice: boolean;
   enabled: boolean;
   accessCode: string;
   voice: Voice;
   youngReader: boolean;
   onError: (message: string) => void;
+  waitForPicture: () => Promise<boolean>;
+  allowBrowserVoice: boolean;
 };
 
 export function useNarration(options: Options) {
   const latest = useRef(options);
   latest.current = options;
   const [speaking, setSpeaking] = useState(false);
+  const [completion, setCompletion] = useState(0);
   const generation = useRef(0);
   const request = useRef<AbortController | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -43,7 +47,7 @@ export function useNarration(options: Options) {
 
   useEffect(() => {
     mute();
-  }, [options.enabled, options.elevenlabs, options.voice, mute]);
+  }, [options.enabled, options.cloudVoice, options.voice, mute]);
   useEffect(
     () => () => {
       generation.current++;
@@ -56,32 +60,52 @@ export function useNarration(options: Options) {
     mute();
     if (automatic && !latest.current.enabled) return;
     const current = generation.current;
+    const picture = latest.current.waitForPicture();
     const finish = () => {
       if (current !== generation.current) return;
       mute();
     };
+    const completed = () => {
+      if (current !== generation.current) return;
+      finish();
+      setCompletion((value) => value + 1);
+    };
     let fallbackStarted = false;
-    const browserVoice = () => {
+    const browserVoice = async () => {
       if (current !== generation.current || fallbackStarted) return;
-      fallbackStarted = true;
-      release();
-      if (!window.speechSynthesis) {
-        setSpeaking(false);
+      if (!latest.current.allowBrowserVoice) {
         latest.current.onError(
-          "Read aloud is unavailable. The story is always shown as text.",
+          "The storyteller’s voice couldn’t connect. Please retry narration.",
         );
+        finish();
         return;
       }
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = "en-US";
-      utterance.rate = latest.current.youngReader ? 0.8 : 0.9;
-      utterance.pitch = 1.05;
-      utterance.onend = finish;
-      utterance.onerror = finish;
-      window.speechSynthesis.speak(utterance);
+      fallbackStarted = true;
+      release();
+      await playWhenReady(
+        picture,
+        () => current === generation.current,
+        () => {
+          if (!window.speechSynthesis) {
+            setSpeaking(false);
+            latest.current.onError(
+              "Read aloud is unavailable. The story is always shown as text.",
+            );
+            return;
+          }
+          const utterance = new SpeechSynthesisUtterance(text);
+          utterance.lang = "en-US";
+          utterance.rate = latest.current.youngReader ? 0.8 : 0.9;
+          utterance.pitch = 1.05;
+          utterance.onend = completed;
+          utterance.onerror = finish;
+          window.speechSynthesis.speak(utterance);
+        },
+      );
+      if (!(await picture)) finish();
     };
     setSpeaking(true); // Stop also cancels audio that is still being prepared.
-    if (!latest.current.elevenlabs) {
+    if (!latest.current.cloudVoice) {
       browserVoice();
       return;
     }
@@ -99,7 +123,7 @@ export function useNarration(options: Options) {
         body: JSON.stringify({ text, voice: latest.current.voice }),
         signal: AbortSignal.any([
           controller.signal,
-          AbortSignal.timeout(35000),
+          AbortSignal.timeout(60000),
         ]),
       });
       if (!response.ok) throw new Error("Voice unavailable");
@@ -108,22 +132,27 @@ export function useNarration(options: Options) {
       objectUrl.current = URL.createObjectURL(blob);
       const player = new Audio(objectUrl.current);
       audio.current = player;
-      player.onended = finish;
+      player.onended = completed;
       player.onerror = () => {
         if (current !== generation.current) return;
         latest.current.onError(
-          "ElevenLabs audio couldn’t play. Using the browser voice.",
+          "The narration couldn’t play. Please retry narration.",
         );
         browserVoice();
       };
-      await player.play();
+      await playWhenReady(
+        picture,
+        () => current === generation.current,
+        () => player.play(),
+      );
+      if (!(await picture)) finish();
     } catch {
       if (current !== generation.current) return;
       latest.current.onError(
-        "ElevenLabs narration is unavailable. Using the browser voice.",
+        "The storyteller’s voice is unavailable. Please retry narration.",
       );
       browserVoice();
     }
   }
-  return { speaking, read, mute };
+  return { speaking, completion, read, mute };
 }

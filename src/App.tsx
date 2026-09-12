@@ -1,13 +1,18 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   ArrowLeft,
   ArrowRight,
   AudioLines,
-  BookOpen,
   Check,
-  ChevronRight,
   CircleHelp,
-  Feather,
   Leaf,
   LoaderCircle,
   Mic,
@@ -18,21 +23,36 @@ import {
   Settings2,
   ShieldCheck,
   Sparkles,
-  Star,
   Volume2,
   VolumeX,
-  Waves,
   X,
 } from "lucide-react";
 import {
   ProfileSchema,
+  choiceVisualFor,
   type Profile,
   type StoryPage,
   type Interaction,
 } from "../shared/story";
 import type { SceneArgs } from "../shared/storyteller";
 import { STORY_VOICES } from "../shared/voices";
-import Illustration from "./Illustration";
+import { pageNarration, spokenChoice } from "../shared/storyInteraction";
+import VideoStage, { useMediaQuery } from "./VideoStage";
+import StoryCaption from "./StoryCaption";
+import PreviewSwitcher from "./PreviewSwitcher";
+import {
+  abortablePreviewDelay,
+  previewConfig,
+  previewMedia,
+  previewPage,
+  previewResponse,
+  previewStages,
+  previewStory,
+  type PreviewStage,
+} from "./storyPreview";
+import { followVisualViewport } from "./visualViewport";
+import { welcomeMedia } from "./welcomeMedia";
+import { Wordmark } from "./Brand";
 import { api } from "./api";
 import { useOrbis } from "./useOrbis";
 import { useMicrophone } from "./useMicrophone";
@@ -45,39 +65,29 @@ type Config = {
   openai: boolean;
   reactor: boolean;
   elevenlabs: boolean;
+  narration?: boolean;
   storyteller: boolean;
   accessCodeRequired: boolean;
 };
-const inspirations = [
-  {
-    name: "An enchanted forest",
-    input: "A little fox who finds a magical lantern in an enchanted forest",
-    icon: Leaf,
-    theme: "forest",
-  },
-  {
-    name: "An ocean adventure",
-    input: "A little turtle and a magical seashell under the ocean",
-    icon: Waves,
-    theme: "ocean",
-  },
-  {
-    name: "A trip to the moon",
-    input: "A moon rabbit who helps a little lost star find its home",
-    icon: Moon,
-    theme: "space",
-  },
-] as const;
 
-export default function App() {
-  const [config, setConfig] = useState<Config | null>(null);
+export default function App({
+  designPreview = false,
+}: {
+  designPreview?: boolean;
+}) {
+  const [config, setConfig] = useState<Config | null>(
+    designPreview ? previewConfig : null,
+  );
+  const [previewStage, setPreviewStage] = useState<PreviewStage>("story");
   const [demo, setDemo] = useState(true);
   const [profile, setProfile] = useState<Profile>(() =>
     ProfileSchema.parse({}),
   );
   const [input, setInput] = useState("");
   const [topic, setTopic] = useState("");
-  const [pages, setPages] = useState<StoryPage[]>([]);
+  const [pages, setPages] = useState<StoryPage[]>(
+    designPreview ? [previewStory] : [],
+  );
   const [pageIndex, setPageIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -97,28 +107,47 @@ export default function App() {
   const [quietHelp, setQuietHelp] = useState(false);
   const activity = useRef(Date.now());
   const [lastWords, setLastWords] = useState("");
-  const [selectedTheme, setSelectedTheme] = useState<
-    "forest" | "ocean" | "space"
-  >("forest");
-  const bookRef = useRef<HTMLDivElement>(null);
+  const bookRef = useRef<HTMLElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
+  const [liveReady, setLiveReady] = useState(false);
+  const [typing, setTyping] = useState(false);
+  const [fullText, setFullText] = useState(false);
+  const [sound, setSound] = useState(!designPreview);
+  const [handsFree, setHandsFree] = useState(false);
+  const previousCompletion = useRef(0);
+  const textDialog = useRef<HTMLDialogElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const storyInputRef = useRef<HTMLInputElement>(null);
+  const typeButtonRef = useRef<HTMLButtonElement>(null);
+  const wasTyping = useRef(false);
+  const systemReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
+  const reducedMotion = profile.reducedMotion || systemReducedMotion;
   const request = useRef<AbortController | null>(null);
   const requestGeneration = useRef(0);
   const page = pages[pageIndex];
   const orbis = useOrbis(accessCode);
   const inStory = pages.length > 0 || opening;
-  const locked = busy || paused;
-  const { speaking, read, mute } = useNarration({
-    elevenlabs: !!config?.elevenlabs && consent && !demo,
+  const simulating =
+    designPreview &&
+    ["preparing", "transcribing", "adapting"].includes(previewStage);
+  const locked = busy || paused || simulating;
+  const { speaking, completion, read, mute } = useNarration({
+    cloudVoice:
+      !!(config?.narration || config?.elevenlabs || config?.openai) &&
+      consent &&
+      !demo,
     enabled: profile.readAloud,
     accessCode,
     voice: profile.voice,
     youngReader: profile.age === "3–5",
     onError: setError,
+    allowBrowserVoice: demo || designPreview,
+    waitForPicture: () =>
+      !demo && config?.reactor ? orbis.waitForPicture() : Promise.resolve(true),
   });
 
   useEffect(() => {
+    if (designPreview) return;
     api<Config>("/api/config")
       .then((c) => {
         setConfig(c);
@@ -129,20 +158,27 @@ export default function App() {
           "Couldn’t reach the story server. Please refresh to reconnect.",
         ),
       );
-  }, []);
+  }, [designPreview]);
   useEffect(() => {
     if (settings || help) dialogRef.current?.showModal();
     else dialogRef.current?.close();
   }, [settings, help]);
   useEffect(() => {
-    if (video.current) video.current.srcObject = orbis.stream;
-  }, [orbis.stream, inStory]);
+    if (fullText) textDialog.current?.showModal();
+    else textDialog.current?.close();
+  }, [fullText]);
+  useLayoutEffect(() => {
+    if (viewportRef.current) return followVisualViewport(viewportRef.current);
+  }, []);
+  useLayoutEffect(() => {
+    if (typing) storyInputRef.current?.focus({ preventScroll: true });
+    else if (wasTyping.current)
+      typeButtonRef.current?.focus({ preventScroll: true });
+    wasTyping.current = typing;
+  }, [typing]);
   useEffect(() => {
-    if (video.current && orbis.stream) {
-      if (paused) video.current.pause();
-      else void video.current.play().catch(() => {});
-    }
-  }, [paused, orbis.stream]);
+    if (orbis.error) mute();
+  }, [orbis.error, mute]);
   useEffect(
     () => () => {
       request.current?.abort();
@@ -153,6 +189,7 @@ export default function App() {
   async function tell(
     words: string,
     interaction: Interaction = questionMode ? "question" : "auto",
+    choiceIndex?: number,
   ) {
     const calming = interaction === "calm" && !!page;
     if (!words.trim() || ((busy || paused) && !calming)) return;
@@ -171,9 +208,12 @@ export default function App() {
     activity.current = Date.now();
     setError("");
     setBusy(true);
+    setTyping(false);
+    if (designPreview) setPreviewStage(pages.length ? "adapting" : "preparing");
     setLastWords(words);
     const first = !pages.length;
     if (first) {
+      if (!demo && config?.reactor) void orbis.prepare();
       setOpening(true);
       setTopic(words);
     }
@@ -186,23 +226,36 @@ export default function App() {
       const branch = pages.slice(0, pageIndex + 1);
       const history =
         branch.length > 12 ? [branch[0], ...branch.slice(-11)] : branch;
-      const result = await api<{ page: StoryPage }>(
-        "/api/story",
-        {
-          input: words,
-          topic: first ? words : topic,
-          history,
-          profile,
-          demo,
-          interaction,
-          conversation,
-        },
-        accessCode,
-        controller.signal,
-      );
-      if (generation !== requestGeneration.current) return;
-      if (first && !profile.reducedMotion)
-        await new Promise((resolve) => setTimeout(resolve, 900));
+      // These plans were generated and moderated with the previous page.
+      // Dispatch before requesting text; never wait for the next GPT response.
+      const preparedChoice =
+        interaction === "continue" && !demo && config?.reactor
+          ? choiceVisualFor(page, choiceIndex, words)
+          : undefined;
+      if (preparedChoice)
+        void orbis.steer(preparedChoice.scene, preparedChoice.change);
+      const result = designPreview
+        ? await (async () => {
+            await abortablePreviewDelay(controller.signal);
+            const next = previewResponse(words);
+            setPreviewStage(next);
+            return { page: previewPage(next) };
+          })()
+        : await api<{ page: StoryPage }>(
+            "/api/story",
+            {
+              input: words,
+              topic: first ? words : topic,
+              history,
+              profile,
+              demo,
+              interaction,
+              choiceIndex,
+              conversation,
+            },
+            accessCode,
+            controller.signal,
+          );
       if (generation !== requestGeneration.current) return;
       const isAside =
         result.page.responseKind === "answer" ||
@@ -230,18 +283,20 @@ export default function App() {
         orbis.stop();
         setPaused(true);
       }
-      if (!isAside && !isCalm && !demo && config?.reactor)
+      if (!preparedChoice && !isAside && !isCalm && !demo && config?.reactor)
         void orbis.steer(result.page.visualPrompt, result.page.visualChange);
       setInput("");
+      setTyping(false);
       setOpening(false);
-      if (profile.readAloud && !isCalm)
-        void read(
-          result.page.narrative + (isAside ? "" : " " + result.page.question),
-          true,
-        );
-      setTimeout(() => bookRef.current?.focus(), 50);
+      if (profile.readAloud && sound && !isCalm)
+        void read(pageNarration(result.page), true);
+      requestAnimationFrame(() => {
+        if (generation === requestGeneration.current)
+          bookRef.current?.focus({ preventScroll: true });
+      });
     } catch (e) {
       if (generation === requestGeneration.current) {
+        if (first) orbis.stop();
         setError(
           e instanceof Error && e.name !== "AbortError"
             ? e.message
@@ -259,15 +314,71 @@ export default function App() {
     accessCode,
     (text) => {
       setInput(text);
-      void tell(text);
+      respond(text);
     },
     setError,
   );
   const micBusy = mic.transcribing || mic.requesting;
+  useEffect(() => {
+    const finished = previousCompletion.current !== completion;
+    previousCompletion.current = completion;
+    if (
+      finished &&
+      handsFree &&
+      page &&
+      !aside &&
+      !paused &&
+      !busy &&
+      !inCall &&
+      !settings &&
+      !fullText &&
+      !error &&
+      !orbis.error &&
+      consent &&
+      config?.openai &&
+      !micBusy &&
+      !mic.recording &&
+      page.responseKind !== "ending"
+    ) {
+      void mic.toggle(true);
+    }
+  }, [
+    completion,
+    speaking,
+    handsFree,
+    page,
+    aside,
+    paused,
+    busy,
+    inCall,
+    settings,
+    fullText,
+    error,
+    orbis.error,
+    consent,
+    config,
+    micBusy,
+    mic.recording,
+    mic.toggle,
+  ]);
+  function respond(words: string) {
+    const index =
+      page && !aside && !questionMode
+        ? spokenChoice(words, page.choices)
+        : undefined;
+    if (index !== undefined) void tell(page.choices[index], "continue", index);
+    else void tell(words);
+  }
   function toggleMic() {
+    if (designPreview) {
+      if (previewStage === "listening")
+        void tell("Make this story gentler and reassuring.");
+      else setPreviewStage("listening");
+      return;
+    }
     if (!config?.openai) {
       setError(
-        "Add an OpenAI key to use the microphone. For now, type an idea or choose one below.",
+        "Add an OpenAI key to use the microphone. For now, choose Type instead to enter your idea.",
       );
       return;
     }
@@ -278,7 +389,7 @@ export default function App() {
     }
     mute();
     setError("");
-    void mic.toggle();
+    void mic.toggle(true);
   }
   useEffect(() => {
     if (
@@ -303,19 +414,21 @@ export default function App() {
     mute();
     setQuestionMode(true);
     setInput("");
-    document.getElementById("reaction")?.focus();
+    setTyping(true);
   }
   function replay() {
+    setSound(true);
     setReplays((value) => value + 1);
-    void read((aside || page).narrative);
+    void read(pageNarration(aside || page));
   }
   function reset() {
     requestGeneration.current++;
     request.current?.abort();
     mic.cancel();
     mute();
-    orbis.stop();
+    orbis.resetStory();
     setInCall(false);
+    setHandsFree(false);
     setAside(null);
     setQuestionMode(false);
     setConversation([]);
@@ -330,6 +443,25 @@ export default function App() {
     setTopic("");
     setError("");
     setLastWords("");
+    setFullText(false);
+    setTyping(false);
+    if (designPreview) setPreviewStage("story");
+  }
+  function showPreview(stage: PreviewStage) {
+    if (!designPreview) return;
+    requestGeneration.current++;
+    request.current?.abort();
+    mute();
+    setPreviewStage(stage);
+    setPages(stage === "preparing" ? [] : [previewPage(stage)]);
+    setPageIndex(0);
+    setOpening(stage === "preparing");
+    setBusy(false);
+    setPaused(false);
+    setTyping(false);
+    setFullText(false);
+    setError("");
+    setLastWords(stage === "gentler" ? "Make the story gentler." : "");
   }
   function flip(index: number) {
     mute();
@@ -338,21 +470,28 @@ export default function App() {
     setConversation([]);
     setReplays(0);
     setPageIndex(index);
-    if (profile.readAloud) void read(pages[index].narrative, true);
     if (!demo && config?.reactor && !paused)
       void orbis.steer(pages[index].visualPrompt);
+    if (profile.readAloud && sound && !paused)
+      void read(pageNarration(pages[index]), true);
   }
   async function togglePause() {
     const value = !paused;
     setPaused(value);
     mute();
     mic.cancel();
-    if (value && !orbis.stream) orbis.stop();
+    if (value) {
+      requestGeneration.current++;
+      request.current?.abort();
+      setBusy(false);
+      setOpening(false);
+    }
+    if (value && !liveReady) orbis.stop();
     else if (!value && !demo && config?.reactor && !orbis.stream && page)
       void orbis.steer(page.visualPrompt);
     else await orbis.pause(value);
-    if (!value && page && profile.readAloud)
-      void read((aside || page).narrative, true);
+    if (!value && page && profile.readAloud && sound)
+      void read(pageNarration(aside || page), true);
   }
   function callStoryteller() {
     if (!config?.storyteller) {
@@ -376,9 +515,15 @@ export default function App() {
     setInCall(true);
   }
   function callScene(scene: SceneArgs) {
-    setSelectedTheme(scene.theme);
     if (config?.reactor && scene.visual_prompt)
       void orbis.steer(scene.visual_prompt);
+  }
+  async function prepareCallPictures() {
+    if (!config?.reactor) return true;
+    return !!(await orbis.steer(
+      page?.visualPrompt ||
+        "A softly glowing open storybook in a peaceful watercolor forest clearing, warm light, slow gentle movement, no written text.",
+    ));
   }
   function callPage(page: StoryPage) {
     setPages((prev) => [...prev, page]);
@@ -392,6 +537,132 @@ export default function App() {
     !mic.recording &&
     config !== null;
 
+  const stageLiveChange = useCallback(
+    (ready: boolean) => {
+      setLiveReady(ready);
+      if (ready && orbis.stream) orbis.pictureReady(orbis.stream);
+    },
+    [orbis.stream, orbis.pictureReady],
+  );
+  const isLive = !!orbis.stream && liveReady;
+  const connecting = designPreview
+    ? previewStage === "connecting"
+    : !demo && !!config?.reactor && !!page && !isLive && !orbis.error;
+  const previewError =
+    designPreview && previewStage === "error"
+      ? "The live world couldn’t connect. Your story is still here."
+      : "";
+  const waitingForStory = !page && (busy || opening || simulating);
+  const ending =
+    page?.responseKind === "ending" ||
+    (!!page && /\bThe end[.!]?\s*$/i.test(page.narrative));
+  const listening =
+    mic.recording || (designPreview && previewStage === "listening");
+  const status = designPreview
+    ? paused
+      ? "Paused"
+      : `${previewStages.find(([key]) => key === previewStage)?.[1]} · simulated`
+    : paused
+      ? "Paused"
+      : mic.recording
+        ? "Listening…"
+        : mic.transcribing
+          ? "Transcribing…"
+          : mic.requesting
+            ? "Opening microphone…"
+            : busy
+              ? "Preparing your story…"
+              : connecting
+                ? orbis.status
+                : isLive
+                  ? "Live · Orbis"
+                  : demo && inStory
+                    ? "Sample story · preview scene"
+                    : welcomeMedia.intro
+                      ? "Welcome to your imagination"
+                      : "Preview scene";
+  const toggleSound = () => {
+    setSound(!sound);
+    if (sound) mute();
+    else if (page && !paused && profile.readAloud)
+      void read(pageNarration(aside || page));
+  };
+
+  const storyActions =
+    page &&
+    !ending &&
+    (paused && page.responseKind === "calm" ? (
+      <button
+        disabled={busy}
+        onClick={() => {
+          setFullText(false);
+          void togglePause();
+        }}
+      >
+        Continue gently <Play size={14} />
+      </button>
+    ) : aside ? (
+      <>
+        <button
+          disabled={locked}
+          onClick={() => {
+            mute();
+            setAside(null);
+            setQuestionMode(false);
+          }}
+        >
+          Back to our adventure
+        </button>
+        <button
+          disabled={locked}
+          onClick={() => {
+            setFullText(false);
+            askQuestion();
+          }}
+        >
+          Ask another question
+        </button>
+      </>
+    ) : page.choices.length === 0 ? (
+      <>
+        <button
+          disabled={locked || micBusy || mic.recording}
+          onClick={() => {
+            setQuestionMode(false);
+            setFullText(false);
+            setTyping(true);
+          }}
+        >
+          Share my idea <Sparkles size={14} />
+        </button>
+        <button
+          disabled={locked || micBusy || mic.recording}
+          onClick={() => {
+            setFullText(false);
+            void tell(
+              "I’m not sure. Please give me a couple of ideas to choose from.",
+              "continue",
+            );
+          }}
+        >
+          Give me ideas
+        </button>
+      </>
+    ) : (
+      page.choices.slice(0, 2).map((choice, index) => (
+        <button
+          key={choice}
+          disabled={locked}
+          onClick={() => {
+            setFullText(false);
+            void tell(choice, "continue", index);
+          }}
+        >
+          <span className="choice-number">{index + 1}</span> {choice}
+        </button>
+      ))
+    ));
+
   return (
     <div
       onPointerDown={() => {
@@ -402,606 +673,447 @@ export default function App() {
         activity.current = Date.now();
         setQuietHelp(false);
       }}
-      className={`app ${profile.reducedMotion ? "reduced-motion" : ""} ${profile.largeText ? "large-text" : ""}`}
+      ref={viewportRef}
+      className={`immersive-app ${inStory ? "is-reading" : ""} ${reducedMotion ? "reduced-motion" : ""} ${profile.largeText ? "large-text" : ""} ${typing ? "is-typing" : ""} ${designPreview ? "is-design-preview" : ""}`}
     >
-      <header className="header">
-        <button
-          className="brand"
-          onClick={reset}
-          aria-label="Little Wonder home"
-        >
-          <span className="brand-icon">
-            <BookOpen size={25} />
-            <Sparkles size={13} />
-          </span>
-          <span>
-            little wonder<span className="brand-dot">✦</span>
-          </span>
-        </button>
-        <div className="header-actions">
-          <span className="mode-label">
-            <span className={demo ? "status-dot demo" : "status-dot"} />
-            {demo ? "Demo storybook" : "Live storytelling"}
-          </span>
-          <button className="settings-button" onClick={() => setSettings(true)}>
-            <Settings2 size={17} />
-            <span>Grown-up settings</span>
+      <VideoStage
+        storyActive={inStory && !designPreview}
+        stream={orbis.stream}
+        paused={paused}
+        connecting={connecting}
+        reducedMotion={reducedMotion}
+        onLiveChange={stageLiveChange}
+        media={designPreview ? previewMedia : welcomeMedia}
+      />
+      <div className="immersive-controls">
+        <header className="immersive-header">
+          <button
+            className="immersive-brand"
+            onClick={reset}
+            aria-label="WonderBook home"
+          >
+            <Wordmark />
           </button>
-        </div>
-      </header>
-
-      <main>
-        {!inStory ? (
-          <>
-            <section className="welcome">
-              <div className="eyebrow">
-                <span /> A LITTLE IDEA. A WHOLE NEW WORLD. <span />
-              </div>
-              <h1>
-                Every great adventure
-                <br />
-                begins with <em>“what if?”</em>
-                <span className="heading-star">✧</span>
-              </h1>
-              <p>A story that listens. A world that changes with you.</p>
-            </section>
-            <section className="create-layout">
-              <div className="idea-panel">
-                <span className="section-label">LET’S MAKE A LITTLE MAGIC</span>
-                <h2>What’s your story about?</h2>
-                <p>
-                  A tiny dragon? A moon made of cheese?
-                  <br />
-                  Your imagination gets to choose.
-                </p>
-                <button
-                  className={`voice-button ${mic.recording ? "recording" : ""}`}
-                  onClick={toggleMic}
-                  disabled={locked || micBusy || config === null}
-                >
-                  <span className="mic-circle">
-                    {micBusy ? (
-                      <LoaderCircle className="spin" size={25} />
-                    ) : mic.recording ? (
-                      <AudioLines size={27} />
-                    ) : (
-                      <Mic size={25} />
-                    )}
-                  </span>
-                  <span>
-                    <strong>
-                      {mic.recording
-                        ? "I’m listening…"
-                        : mic.transcribing
-                          ? "Listening to your idea…"
-                          : mic.requesting
-                            ? "Opening the microphone…"
-                            : "Tell me your idea"}
-                      <small>
-                        {mic.recording
-                          ? "Tap when you’re done · up to 30 seconds"
-                          : "Tap the microphone to begin"}
-                      </small>
-                    </strong>
-                  </span>
-                  {mic.recording && <span className="record-dot" />}
-                </button>
-                <button
-                  className="call-button"
-                  onClick={callStoryteller}
-                  disabled={locked || mic.recording || micBusy}
-                >
-                  <span className="call-circle">
-                    <Phone size={21} />
-                  </span>
-                  <span>
-                    <strong>
-                      Call the storyteller
-                      <small>
-                        Talk out loud, and they’ll tell it back to you
-                      </small>
-                    </strong>
-                  </span>
-                  <ChevronRight size={17} />
-                </button>
-                <div className="or-line">
-                  <span /> or write a little something <span />
-                </div>
-                <form
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    void tell(input);
-                  }}
-                >
-                  <label className="sr-only" htmlFor="idea">
-                    Your story idea
-                  </label>
-                  <textarea
-                    id="idea"
-                    value={input}
-                    maxLength={1000}
-                    onChange={(e) => setInput(e.target.value)}
-                    placeholder="I want a story about a little fox who…"
-                    rows={2}
-                    disabled={locked || mic.recording || micBusy}
-                  />
-                  <button
-                    className="primary create-button"
-                    disabled={!canSubmit}
-                  >
-                    Open my storybook <ArrowRight size={18} />
-                  </button>
-                </form>
-                <p className="tiny-note">
-                  <ShieldCheck size={14} /> A little wonder, shared with a
-                  grown-up.
-                </p>
-              </div>
-              <div className="preview-wrap">
-                <span className="floating-star star-one">✧</span>
-                <span className="floating-star star-two">✦</span>
-                <div className="preview-book">
-                  <div className="preview-art">
-                    <Illustration theme={selectedTheme} />
-                    <span className="preview-caption">
-                      <span /> A world waiting for your words
-                    </span>
-                  </div>
-                  <div className="preview-paper">
-                    <span>ONCE UPON A POSSIBILITY…</span>
-                    <h3>Your story starts here.</h3>
-                    <span className="paper-flourish">✦</span>
-                  </div>
-                </div>
-                <div className="handwritten">
-                  You bring the idea.
-                  <br />
-                  We’ll bring the wonder. <span>⤴</span>
-                </div>
-              </div>
-            </section>
-            <section className="inspiration">
-              <span>A little spark to get you started</span>
-              <div>
-                {inspirations.map((item) => (
-                  <button
-                    key={item.theme}
-                    onClick={() => {
-                      setInput(item.input);
-                      setSelectedTheme(item.theme);
-                    }}
-                  >
-                    <item.icon size={18} />
-                    {item.name}
-                    <ChevronRight size={15} />
-                  </button>
-                ))}
-              </div>
-            </section>
-          </>
-        ) : (
-          <section className="story-section">
-            <div className="story-heading">
-              <button className="text-button" onClick={reset}>
-                <ArrowLeft size={17} /> A new story
+          <div className="floating-tools float-surface">
+            {!designPreview && (
+              <button
+                aria-label="Call the storyteller"
+                disabled={locked || micBusy || mic.recording}
+                onClick={callStoryteller}
+              >
+                <Phone size={20} />
               </button>
-              <span className="section-label">
-                {demo ? "YOUR DEMO ADVENTURE" : "YOUR VERY OWN LIVING STORY"}
-              </span>
-              <div className="story-heading-actions">
-                <button
-                  className="text-button"
-                  onClick={callStoryteller}
-                  disabled={busy}
-                >
-                  <Phone size={15} /> Call the storyteller
-                </button>
-                <button
-                  className="text-button"
-                  onClick={togglePause}
-                  disabled={busy}
-                >
-                  {paused ? <Play size={16} /> : <Pause size={16} />}{" "}
-                  {paused ? "Resume" : "Pause"}
-                </button>
-              </div>
-            </div>
-            <div
-              className={`storybook ${opening ? "opening" : ""}`}
-              ref={bookRef}
-              tabIndex={-1}
+            )}
+            <button
+              aria-label={paused ? "Resume experience" : "Pause experience"}
+              aria-pressed={paused}
+              onClick={() => void togglePause()}
             >
-              <div className="story-art">
-                <Illustration theme={page?.theme || selectedTheme} />
-                <video
-                  ref={video}
-                  autoPlay
-                  muted
-                  playsInline
-                  className={orbis.stream ? "live-video visible" : "live-video"}
-                  onPlaying={() => {
-                    if (paused) video.current?.pause();
-                  }}
-                />
-                <span className="picture-label">
-                  <span />
-                  {demo ? "Illustrated demo" : orbis.status}
-                </span>
-                {paused && (
-                  <div className="paused-overlay">
-                    <Pause size={30} />
-                    <span>A little pause</span>
-                  </div>
-                )}
-              </div>
-              <article
-                className="story-paper"
-                aria-live="polite"
-                aria-busy={busy}
-              >
-                {opening ? (
-                  <div className="opening-message">
-                    <BookOpen size={50} />
-                    <span className="section-label">ONCE UPON A TIME…</span>
-                    <h2>Your world is opening.</h2>
-                    <p>A little idea is becoming a story.</p>
-                  </div>
-                ) : (
-                  page && (
-                    <>
-                      <div className="page-top">
-                        <span>
-                          CHAPTER {String(pageIndex + 1).padStart(2, "0")}
-                        </span>
-                        <Feather size={19} />
-                      </div>
-                      <h2>{page.title}</h2>
-                      {(aside || page).acknowledgment && (
-                        <p className="contribution">
-                          <Check size={14} />
-                          {(aside || page).acknowledgment}
-                        </p>
-                      )}
-                      {aside && (
-                        <span className="answer-label">
-                          {aside.responseKind === "simplify"
-                            ? "IN SIMPLER WORDS"
-                            : "A MOMENT TO WONDER"}{" "}
-                          · YOUR PLACE IS SAVED
-                        </span>
-                      )}
-                      <p className="narrative">{(aside || page).narrative}</p>
-                      <div className="story-question">
-                        <Sparkles size={17} />
-                        <p>
-                          {aside
-                            ? "Ready to return to our adventure?"
-                            : page.question}
-                        </p>
-                      </div>
-                      <div
-                        className={`choices ${replays >= 2 ? "choices-roomy" : ""}`}
-                      >
-                        {paused && page.responseKind === "calm" ? (
-                          <button disabled={busy} onClick={togglePause}>
-                            Continue gently <Play size={15} />
-                          </button>
-                        ) : aside ? (
-                          <>
-                            <button
-                              disabled={locked || mic.recording || micBusy}
-                              onClick={() => {
-                                mute();
-                                setAside(null);
-                                setQuestionMode(false);
-                              }}
-                            >
-                              Back to our adventure <ArrowRight size={15} />
-                            </button>
-                            <button
-                              disabled={locked || mic.recording || micBusy}
-                              onClick={askQuestion}
-                            >
-                              Ask another question <CircleHelp size={15} />
-                            </button>
-                          </>
-                        ) : page.responseKind === "ending" ? (
-                          <button disabled={busy} onClick={reset}>
-                            Start a new adventure <BookOpen size={15} />
-                          </button>
-                        ) : page.choices.length === 0 ? (
-                          <div className="open-answer">
-                            <p>
-                              Your idea belongs in this story. Say it or type it
-                              below.
-                            </p>
-                            <button
-                              disabled={locked || mic.recording || micBusy}
-                              onClick={() => {
-                                setQuestionMode(false);
-                                document.getElementById("reaction")?.focus();
-                              }}
-                            >
-                              Share my idea <Sparkles size={15} />
-                            </button>
-                            <button
-                              disabled={locked || mic.recording || micBusy}
-                              onClick={() =>
-                                void tell(
-                                  "I’m not sure. Please give me a couple of ideas to choose from.",
-                                  "continue",
-                                )
-                              }
-                            >
-                              Give me ideas <CircleHelp size={15} />
-                            </button>
-                          </div>
-                        ) : (
-                          page.choices.slice(0, 2).map((choice) => (
-                            <button
-                              key={choice}
-                              disabled={locked || mic.recording || micBusy}
-                              onClick={() => void tell(choice, "continue")}
-                            >
-                              {choice}
-                              <ArrowRight size={15} />
-                            </button>
-                          ))
-                        )}
-                      </div>
-                      <div className="page-bottom">
-                        <button
-                          className="icon-button"
-                          aria-label={
-                            speaking ? "Stop narration" : "Read this page aloud"
-                          }
-                          onClick={() => (speaking ? mute() : replay())}
-                          disabled={paused || busy || mic.recording || micBusy}
-                        >
-                          {speaking ? (
-                            <VolumeX size={18} />
-                          ) : (
-                            <Volume2 size={18} />
-                          )}
-                        </button>
-                        <span>— {pageIndex + 1} —</span>
-                        <div className="page-navigation">
-                          <button
-                            aria-label="Previous page"
-                            disabled={
-                              pageIndex === 0 ||
-                              locked ||
-                              mic.recording ||
-                              micBusy
-                            }
-                            onClick={() => flip(pageIndex - 1)}
-                          >
-                            <ArrowLeft size={17} />
-                          </button>
-                          <button
-                            aria-label="Next page"
-                            disabled={
-                              pageIndex === pages.length - 1 ||
-                              locked ||
-                              mic.recording ||
-                              micBusy
-                            }
-                            onClick={() => flip(pageIndex + 1)}
-                          >
-                            <ArrowRight size={17} />
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )
-                )}
-              </article>
-            </div>
-            <div className="story-controls">
-              <div className="story-input-label">
-                <span className="section-label">YOU’RE PART OF THE STORY</span>
-                <p>
-                  Ask a question. Change the adventure. Tell us how you feel.
-                </p>
-              </div>
-              <div className="interaction-modes" aria-label="Story interaction">
-                <button
-                  aria-pressed={!questionMode}
-                  disabled={locked || mic.recording || micBusy}
-                  onClick={() => setQuestionMode(false)}
-                >
-                  Change the story
-                </button>
-                <button
-                  aria-pressed={questionMode}
-                  disabled={locked || mic.recording || micBusy}
-                  onClick={askQuestion}
-                >
-                  Ask a question
-                </button>
-              </div>
-              <p className="interaction-hint">
-                {questionMode
-                  ? "Your question gets an answer. We’ll keep your place in the story."
-                  : "Your words and choices shape what happens next."}{" "}
-                Tap the mic to talk; tap again to send. No camera.
-              </p>
-              <form
-                className="reaction-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  void tell(input);
-                }}
-              >
-                <button
-                  type="button"
-                  className={`reaction-mic ${mic.recording ? "recording" : ""}`}
-                  aria-label={
-                    mic.recording ? "Finish recording" : "Talk to the story"
-                  }
-                  onClick={toggleMic}
-                  disabled={locked || micBusy}
-                >
-                  {micBusy ? (
-                    <LoaderCircle className="spin" size={20} />
-                  ) : mic.recording ? (
-                    <AudioLines size={21} />
-                  ) : (
-                    <Mic size={21} />
-                  )}
-                </button>
-                <label className="sr-only" htmlFor="reaction">
-                  Tell the story what happens next
-                </label>
-                <input
-                  id="reaction"
-                  value={input}
-                  maxLength={1000}
-                  onChange={(e) => setInput(e.target.value)}
-                  placeholder={
-                    mic.recording
-                      ? "Listening… tap the mic when you’re done"
-                      : questionMode
-                        ? "Why does the moon shine?"
-                        : page?.choices.length === 0
-                          ? "My idea is…"
-                          : "“Can the fox have a friend?”"
-                  }
-                  disabled={locked || mic.recording || micBusy}
-                />
-                <button
-                  className="send-button"
-                  disabled={!canSubmit}
-                  aria-label="Send to the story"
-                >
-                  {busy ? (
-                    <LoaderCircle className="spin" size={18} />
-                  ) : (
-                    <ArrowRight size={20} />
-                  )}
-                </button>
-              </form>
-              <div className="reaction-chips">
-                <button
-                  disabled={!page || (busy && paused)}
-                  onClick={() =>
-                    void tell("Please make the story gentler.", "calm")
-                  }
-                >
-                  <Leaf size={14} /> Make it gentler
-                </button>
-                <button
-                  disabled={locked || mic.recording || micBusy}
-                  onClick={() =>
-                    void tell(
-                      "Let’s explore something surprising and friendly.",
-                      "continue",
-                    )
-                  }
-                >
-                  <Star size={14} /> More adventure
-                </button>
-                <button
-                  disabled={locked || mic.recording || micBusy}
-                  onClick={() =>
-                    void tell(
-                      "Let’s give this story a cozy, happy ending.",
-                      "ending",
-                    )
-                  }
-                >
-                  <Moon size={14} /> A cozy ending
-                </button>
-              </div>
-              {paused && !busy && page?.responseKind === "calm" && (
-                <p className="adaptive-help" role="status">
-                  The pictures are stopped. Your gentler page is ready. Choose
-                  “Continue gently” whenever you’re ready.
-                </p>
-              )}
-              {replays >= 2 && !aside && !profile.simpleLanguage && (
-                <div className="adaptive-help">
-                  <span>Want a shorter version of this page?</span>
-                  <button
-                    disabled={locked || mic.recording || micBusy}
-                    onClick={() =>
-                      void tell(
-                        "Please explain this page in simpler words.",
-                        "simplify",
-                      )
-                    }
-                  >
-                    Use simpler words
-                  </button>
-                </div>
-              )}
-              {quietHelp && (
-                <div className="adaptive-help">
-                  <span>Take your time. The adventure can wait.</span>
-                  <button
-                    disabled={locked || mic.recording || micBusy}
-                    onClick={replay}
-                  >
-                    Hear it again
-                  </button>
-                  <button onClick={() => setQuietHelp(false)}>
-                    I’m still reading
-                  </button>
-                </div>
-              )}
-              {lastWords && (
-                <p className="last-words">Your words: “{lastWords}”</p>
-              )}
-            </div>
-            {busy && !opening && (
-              <p className="working-note" role="status">
-                <LoaderCircle className="spin" size={16} /> Listening to your
-                contribution…
-              </p>
-            )}
-            {!demo &&
-              !paused &&
-              config?.reactor &&
-              !orbis.stream &&
-              !orbis.error &&
-              page && (
-                <p className="working-note">
-                  Live pictures can take a few minutes to wake up. Your story is
-                  ready to read.
-                </p>
-              )}
-            {orbis.error && (
-              <div className="error-message" role="alert">
-                {orbis.error}
-                <button
-                  onClick={() => {
-                    orbis.stop();
-                    if (page) void orbis.steer(page.visualPrompt);
-                  }}
-                  disabled={paused}
-                >
-                  Reconnect pictures
-                </button>
-              </div>
-            )}
-          </section>
-        )}
-        {error && (
-          <div className="error-message" role="alert">
-            <CircleHelp size={18} />
-            <span>{error}</span>
-            <button aria-label="Dismiss message" onClick={() => setError("")}>
-              <X size={16} />
+              {paused ? <Play size={20} /> : <Pause size={20} />}
+            </button>
+            <button
+              aria-label={sound ? "Mute narration" : "Enable narration"}
+              aria-pressed={sound}
+              onClick={toggleSound}
+            >
+              {sound ? <Volume2 size={20} /> : <VolumeX size={20} />}
+            </button>
+            <span className="tool-divider" />
+            <button
+              aria-label="Grown-up settings"
+              onClick={() => setSettings(true)}
+            >
+              <Settings2 size={20} />
             </button>
           </div>
-        )}
-        {demo && (
-          <p className="demo-note">
-            Demo mode uses three illustrated sample adventures. Add API keys for
-            original stories and live video.
-          </p>
-        )}
-      </main>
+        </header>
+        <main
+          className="immersive-main"
+          ref={bookRef}
+          tabIndex={-1}
+          aria-label={page ? page.title : "Enter your story"}
+        >
+          {designPreview ? (
+            <PreviewSwitcher
+              stage={previewStage}
+              status={status}
+              onChange={showPreview}
+            />
+          ) : (
+            <div className="world-status float-surface" role="status">
+              <span
+                className={
+                  isLive && !paused ? "live-indicator" : "ambient-indicator"
+                }
+              />
+              {status}
+            </div>
+          )}
+          {inStory && (
+            <button className="exit-story float-surface" onClick={reset}>
+              <X size={16} /> Exit story
+            </button>
+          )}
+          <div className="story-dock">
+            {(busy ||
+              simulating ||
+              connecting ||
+              listening ||
+              mic.transcribing) &&
+              page && (
+                <div className="story-feedback float-surface" role="status">
+                  {listening ? (
+                    <AudioLines size={16} />
+                  ) : (
+                    <LoaderCircle className="spin" size={15} />
+                  )}
+                  {listening
+                    ? "Your idea can change this world…"
+                    : connecting
+                      ? "Opening your world. The voice will wait for the first live picture…"
+                      : mic.transcribing ||
+                          (previewStage === "transcribing" && designPreview)
+                        ? "Turning a little voice into words…"
+                        : "We’re making room for your idea…"}
+                </div>
+              )}
+            {page && (
+              <StoryCaption
+                key={pageIndex + (aside || page).narrative}
+                text={(aside || page).narrative}
+                preview={designPreview}
+                hidden={typing}
+                paused={
+                  paused ||
+                  busy ||
+                  simulating ||
+                  connecting ||
+                  listening ||
+                  typing ||
+                  fullText ||
+                  settings ||
+                  help
+                }
+                onFullText={() => setFullText(true)}
+              />
+            )}
+            {waitingForStory && (
+              <div className="story-arrival" role="status">
+                <Sparkles className={paused ? "" : "arrival-spark"} size={28} />
+                <span className="welcome-kicker">
+                  A LITTLE MAGIC IS ON ITS WAY
+                </span>
+                <h1>
+                  {paused
+                    ? "Your world can wait."
+                    : "Every adventure starts\nwith a little wonder."}
+                </h1>
+                <p>
+                  {designPreview
+                    ? "Simulated preparation · the forest keeps playing."
+                    : "We’re turning your idea into the first page."}
+                </p>
+                {designPreview && (
+                  <button
+                    className="preview-continue"
+                    onClick={() => showPreview("connecting")}
+                  >
+                    Continue preview <ArrowRight size={15} />
+                  </button>
+                )}
+              </div>
+            )}
+            {!page && !waitingForStory && (
+              <div className="welcome-question story-topic-card float-surface">
+                <span className="welcome-kicker">
+                  A LITTLE VOICE. A WORLD OF WONDER.
+                </span>
+                <h1>What would you like your story to be about?</h1>
+                <p>
+                  A brave princess, a friendly dragon, or anything you imagine.
+                </p>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (canSubmit) respond(input);
+                  }}
+                >
+                  <label className="sr-only" htmlFor="topic-idea">
+                    Your story idea
+                  </label>
+                  <input
+                    id="topic-idea"
+                    value={input}
+                    maxLength={1000}
+                    onChange={(event) => setInput(event.target.value)}
+                    placeholder="I want a story about…"
+                    disabled={locked || micBusy || mic.recording}
+                  />
+                  <button className="start-story" disabled={!canSubmit}>
+                    Begin my story <ArrowRight size={18} />
+                  </button>
+                </form>
+                <button
+                  className="topic-mic"
+                  onClick={toggleMic}
+                  disabled={locked || micBusy || !config}
+                >
+                  {mic.recording ? <AudioLines size={19} /> : <Mic size={19} />}
+                  {mic.recording ? "Finish recording" : "Tell me your idea"}
+                </button>
+                {demo && (
+                  <p className="sample-mode-note">
+                    Sample mode: curated stories and browser voice. Live
+                    storytelling needs the connected APIs.
+                  </p>
+                )}
+              </div>
+            )}
+            {page && !typing && (
+              <p className="story-question">{(aside || page).question}</p>
+            )}
+            {page && !typing && (
+              <div className="immersive-choices" aria-label="Story choices">
+                {storyActions}
+              </div>
+            )}
+            {ending && !typing ? (
+              <div className="story-ending">
+                <button className="ending-button float-surface" onClick={reset}>
+                  <Sparkles size={17} /> Dream a new story
+                </button>
+                <span>Keep the wonder. Rest a little.</span>
+              </div>
+            ) : page ? (
+              <section
+                className="immersive-composer"
+                aria-label={page ? "Shape the story" : "Create your story"}
+              >
+                {!typing ? (
+                  <>
+                    <button
+                      className={`immersive-mic ${listening ? "is-recording" : ""}`}
+                      aria-label={
+                        designPreview
+                          ? listening
+                            ? "Finish simulated reaction"
+                            : "Simulate a child reaction"
+                          : mic.recording
+                            ? "Finish recording"
+                            : "Answer out loud"
+                      }
+                      disabled={locked || micBusy || !config}
+                      onClick={toggleMic}
+                    >
+                      {micBusy || busy || simulating ? (
+                        <LoaderCircle className="spin" size={30} />
+                      ) : listening ? (
+                        <AudioLines size={32} />
+                      ) : (
+                        <Mic size={30} />
+                      )}
+                    </button>
+                    <span className="mic-hint">
+                      {designPreview
+                        ? listening
+                          ? "Tap to finish the simulated reaction"
+                          : "Sample reaction · no recording"
+                        : mic.recording
+                          ? "Listening… pause when you’re done"
+                          : mic.transcribing
+                            ? "Turning your voice into words…"
+                            : paused
+                              ? "Resume to keep imagining"
+                              : page.choices.length === 2
+                                ? "Say one, two, or the option"
+                                : "Tell me your idea"}
+                    </span>
+                    <button
+                      ref={typeButtonRef}
+                      className="type-instead"
+                      disabled={locked || mic.recording || micBusy}
+                      onClick={() => setTyping(true)}
+                    >
+                      Type instead <ArrowRight size={14} />
+                    </button>
+                    {!demo && (
+                      <button
+                        className="hands-free"
+                        aria-pressed={handsFree}
+                        disabled={locked || micBusy}
+                        onClick={() => {
+                          setHandsFree(!handsFree);
+                          if (handsFree) mic.cancel();
+                          else if (!speaking && !mic.recording) toggleMic();
+                        }}
+                      >
+                        Hands-free answers {handsFree ? "on" : "off"}
+                      </button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <p className="typing-prompt">
+                      {questionMode
+                        ? "What would you like to ask?"
+                        : page
+                          ? (aside || page).question
+                          : "What would you like to imagine?"}
+                    </p>
+                    <form
+                      className="floating-input float-surface"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (canSubmit) {
+                          storyInputRef.current?.blur();
+                          respond(input);
+                        }
+                      }}
+                    >
+                      <label className="sr-only" htmlFor="story-input">
+                        {page ? "Your next idea" : "Your story idea"}
+                      </label>
+                      <input
+                        ref={storyInputRef}
+                        id="story-input"
+                        value={input}
+                        maxLength={1000}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder={
+                          page
+                            ? questionMode
+                              ? "Your question…"
+                              : "My idea is…"
+                            : "A princess and a friendly dragon…"
+                        }
+                        disabled={locked || micBusy}
+                        enterKeyHint="send"
+                        autoComplete="off"
+                      />
+                      <button
+                        type="submit"
+                        aria-label="Send story idea"
+                        disabled={!canSubmit}
+                      >
+                        <ArrowRight size={21} />
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Close typing"
+                        onClick={() => setTyping(false)}
+                      >
+                        <X size={19} />
+                      </button>
+                    </form>
+                  </>
+                )}
+                {page && !typing && (
+                  <div
+                    className="floating-reactions"
+                    aria-label="Story reactions"
+                  >
+                    <button
+                      disabled={locked || micBusy || mic.recording}
+                      onClick={askQuestion}
+                    >
+                      <CircleHelp size={14} /> Ask a question
+                    </button>
+                    <button
+                      disabled={locked || mic.recording || micBusy}
+                      onClick={() =>
+                        void tell(
+                          "That feels scary. Make the story gentler and reassuring.",
+                          "calm",
+                        )
+                      }
+                    >
+                      <Leaf size={14} /> Gentler
+                    </button>
+                    <button
+                      disabled={locked || mic.recording || micBusy}
+                      onClick={() =>
+                        void tell(
+                          "I love this! Let’s have a little more adventure.",
+                          "continue",
+                        )
+                      }
+                    >
+                      <Sparkles size={14} /> More wonder
+                    </button>
+                    <button
+                      disabled={locked || mic.recording || micBusy}
+                      onClick={() =>
+                        void tell(
+                          "Let’s give this story a cozy, happy ending.",
+                          "ending",
+                        )
+                      }
+                    >
+                      <Moon size={14} /> Cozy ending
+                    </button>
+                  </div>
+                )}
+                {page && !typing && (quietHelp || replays >= 2) && (
+                  <div className="floating-reactions">
+                    <button
+                      disabled={locked || micBusy || mic.recording}
+                      onClick={replay}
+                    >
+                      Hear it again
+                    </button>
+                    <button
+                      disabled={locked || micBusy || mic.recording}
+                      onClick={() =>
+                        void tell(
+                          "Please explain this page in simpler words.",
+                          "simplify",
+                        )
+                      }
+                    >
+                      Simpler words
+                    </button>
+                  </div>
+                )}
+              </section>
+            ) : null}
+            {!page && !typing && !waitingForStory && (
+              <p className="grown-up-note">
+                <ShieldCheck size={13} /> Best imagined together with a
+                grown-up.
+              </p>
+            )}
+            {(error || orbis.error || previewError) && (
+              <div className="floating-error" role="alert">
+                <span>{error || orbis.error || previewError}</span>
+                {previewError ? (
+                  <button onClick={() => showPreview("story")}>
+                    Retry preview
+                  </button>
+                ) : /narration|storyteller’s voice/i.test(error) && page ? (
+                  <button onClick={replay}>Retry narration</button>
+                ) : orbis.error && !error ? (
+                  <button
+                    disabled={paused}
+                    onClick={() => {
+                      orbis.stop();
+                      if (page) void orbis.steer(page.visualPrompt);
+                    }}
+                  >
+                    Retry live video
+                  </button>
+                ) : (
+                  <button
+                    aria-label="Dismiss message"
+                    onClick={() => setError("")}
+                  >
+                    <X size={16} />
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
       {inCall && (
         <Suspense
           fallback={
@@ -1018,6 +1130,9 @@ export default function App() {
             history={pages}
             stream={orbis.stream}
             pictureStatus={orbis.status}
+            pictureError={orbis.error}
+            onPictureReady={orbis.pictureReady}
+            preparePictures={prepareCallPictures}
             livePictures={!!config?.reactor}
             onScene={callScene}
             onPage={callPage}
@@ -1025,21 +1140,63 @@ export default function App() {
           />
         </Suspense>
       )}
-
-      <footer>
-        <span>
-          <BookOpen size={15} /> Small stories. Endless possibilities.
-        </span>
-        <div>
-          <span>Made with GPT + Orbis + ElevenLabs</span>
-          <button onClick={() => setHelp(true)}>
-            How the magic works <CircleHelp size={14} />
+      <dialog
+        ref={textDialog}
+        className="full-story-dialog"
+        aria-labelledby="full-story-heading"
+        onCancel={() => setFullText(false)}
+        onClick={(e) => {
+          if (e.target === e.currentTarget) setFullText(false);
+        }}
+      >
+        <div className="dialog-content">
+          <button
+            className="close-dialog icon-button"
+            aria-label="Close full story"
+            onClick={() => setFullText(false)}
+          >
+            <X size={21} />
           </button>
+          <span className="section-label">READ AT YOUR OWN PACE</span>
+          <h2 id="full-story-heading">{page?.title}</h2>
+          <p className="text-timing-note">
+            Read at your own pace. Subtitle navigation is independent of
+            narration.{" "}
+            {designPreview &&
+              "This is a scripted design preview, not a generated story."}
+          </p>
+          {page && (
+            <>
+              <p className="full-narrative">{(aside || page).narrative}</p>
+              <p>{(aside || page).question}</p>
+              <div className="story-choices">{storyActions}</div>
+            </>
+          )}
+          <nav className="full-page-nav" aria-label="Story pages">
+            <button
+              disabled={pageIndex === 0 || locked}
+              onClick={() => flip(pageIndex - 1)}
+            >
+              <ArrowLeft size={18} /> Previous page
+            </button>
+            <span>
+              {pageIndex + 1} / {pages.length}
+            </span>
+            <button
+              disabled={pageIndex >= pages.length - 1 || locked}
+              onClick={() => flip(pageIndex + 1)}
+            >
+              Next page <ArrowRight size={18} />
+            </button>
+          </nav>
+          {lastWords && (
+            <p className="text-timing-note">Your words: “{lastWords}”</p>
+          )}
         </div>
-      </footer>
-
+      </dialog>
       <dialog
         ref={dialogRef}
+        aria-label={help ? "How WonderBook works" : "Grown-up settings"}
         onCancel={() => {
           setSettings(false);
           setHelp(false);
@@ -1085,17 +1242,17 @@ export default function App() {
                 pages fill in as they talk.
               </p>
               <p>
-                Live read aloud uses an AI voice from ElevenLabs when
-                configured, with browser narration as a fallback. Illustrations
-                stay visible while live video connects. Demo mode uses curated
-                scenes instead of AI generation.
+                Live read aloud uses an AI voice from ElevenLabs, with OpenAI
+                narration when ElevenLabs is unavailable. The welcome background
+                stays visible until live video has played its first frame. Demo
+                mode uses curated stories instead of AI generation.
               </p>
               <p>
                 Voice clips are sent to OpenAI for transcription; story text and
                 preferences are sent for generation. Only scene descriptions go
-                to Reactor. Narrated story pages go to ElevenLabs. This app
-                keeps no recordings or saved profiles. Providers’ own data
-                policies still apply.
+                to Reactor. Narrated story pages go to ElevenLabs or OpenAI.
+                This app keeps no recordings or saved profiles. Providers’ own
+                data policies still apply.
               </p>
             </>
           ) : (
@@ -1167,14 +1324,18 @@ export default function App() {
                     {
                       key: "reducedMotion",
                       label: "Less movement",
-                      detail: "Still interface and gentler video prompts.",
+                      detail:
+                        "Still background until you choose Play; gentler scene prompts.",
                     },
                     {
                       key: "readAloud",
                       label: "Read the story aloud",
-                      detail: config?.elevenlabs
-                        ? "ElevenLabs AI voice in live mode; browser voice in demo mode."
-                        : "Synthetic narration from your browser.",
+                      detail:
+                        config?.narration ||
+                        config?.openai ||
+                        config?.elevenlabs
+                          ? "Natural AI narration from ElevenLabs or OpenAI."
+                          : "Synthetic narration from your browser.",
                     },
                   ] as const
                 ).map((option) => (
@@ -1217,11 +1378,21 @@ export default function App() {
                 </div>
                 <div>
                   <span>
-                    <i className={config?.elevenlabs ? "connected" : ""} />{" "}
-                    ElevenLabs narration
+                    <i
+                      className={
+                        config?.narration ||
+                        config?.openai ||
+                        config?.elevenlabs
+                          ? "connected"
+                          : ""
+                      }
+                    />{" "}
+                    AI story narration
                   </span>
                   <small>
-                    {config?.elevenlabs ? "Key configured" : "Browser voice"}
+                    {config?.narration || config?.openai || config?.elevenlabs
+                      ? "Ready"
+                      : "Demo voice"}
                   </small>
                 </div>
                 <div>
@@ -1238,7 +1409,7 @@ export default function App() {
                     disabled={inStory || !config?.openai}
                     onChange={(e) => setDemo(e.target.checked)}
                   />{" "}
-                  Use illustrated demo{" "}
+                  Use sample stories{" "}
                   {inStory && <small>(start a new story to change)</small>}
                 </label>
               </div>
@@ -1265,8 +1436,8 @@ export default function App() {
                 <span>
                   I’m a grown-up supervising this session. I allow sending voice
                   clips and story text to OpenAI, scene descriptions to Reactor,
-                  and narrated story pages to ElevenLabs when enabled, plus live
-                  call audio to ElevenLabs during a story call.
+                  and narrated story pages to ElevenLabs or OpenAI when enabled,
+                  plus live call audio to ElevenLabs during a story call.
                 </span>
               </label>
               <p className="privacy-note">
@@ -1274,6 +1445,9 @@ export default function App() {
                 for this session. Provider data policies apply. Age and language
                 changes shape the next page.
               </p>
+              <button className="how-it-works" onClick={() => setHelp(true)}>
+                How the magic works <CircleHelp size={15} />
+              </button>
               <button
                 className="primary done-button"
                 onClick={() => setSettings(false)}

@@ -2,7 +2,7 @@
 
 A living fairy-tale storybook made for the [Live Models Hackathon](https://luma.com/gh4256ju), hosted by Visko, Reactor, and Nebius. Work lives on the `simon` branch.
 
-Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. The opening book animation bridges the wait for the first page; a local illustration remains visible while live video starts.
+Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. A visible opening box collects the topic. Story text and numbered choices appear over live Orbis video, and natural AI narration reads the same story, question and options. The welcome forest animation is hidden once a story starts so it cannot be mistaken for generated video.
 
 There are two ways to hear a story. The **storybook** is turn-by-turn: say or type an idea, read the page, choose what happens next. A **story call** is live: an ElevenLabs storyteller joins over WebRTC and tells the story out loud in real time, listening while it speaks, and filling in the storybook pages as it goes.
 
@@ -18,6 +18,18 @@ npm run dev
 
 Open [localhost:3000](http://localhost:3000). The app works immediately in **illustrated demo mode**, using three curated adventures (forest, ocean, space). Demo mode does not generate original stories or live video. Narration uses the browser's synthetic voice.
 
+## Local preview with the deployed APIs
+
+To use the real voices and video locally without copying secrets, run:
+
+```sh
+PORT=3004 DEV_API_ORIGIN=https://live-models-hackathon-production.up.railway.app npm run dev
+```
+
+Refresh localhost after changing the server configuration. API requests use Railway's existing provider connections and video session registry. This proxy is disabled in production.
+
+On a story page, click either numbered option or tap **Answer out loud** and say its number or wording. Recording submits after a pause. **Hands-free answers** optionally starts listening after narration ends; clicking an option cancels any in-progress recording. The microphone is never used by the design preview.
+
 ## Connect the providers
 
 Put these values in the ignored `.env.local` file, then restart the server and refresh the page. `.env.local` is read first and `.env` second, so a value set in `.env.local` wins.
@@ -28,11 +40,11 @@ REACTOR_API_KEY=your-reactor-key
 ELEVENLABS_API_KEY=your-elevenlabs-key
 ```
 
-Do not commit keys, put them in client code, or prefix them with `VITE_`. The server exchanges the Reactor key for a 10-minute, model-scoped token limited to one session, and the ElevenLabs key for a single conversation token. The browser receives only those short-lived tokens.
+Do not commit keys, put them in client code, or prefix them with `VITE_`. The server owns each Reactor session and its cleanup token, and exchanges the ElevenLabs key for a single conversation token. The browser receives only those short-lived tokens.
 
 The Reactor key must have access to `reactor/visko-orbis-stable`. An Orbis/Visko credential that cannot mint tokens at Reactor is not interchangeable with a Reactor API key. The ElevenLabs key does two jobs: narration needs only text-to-speech, but story calls need the Agents platform, so a text-to-speech-only key narrates pages without being able to place a call.
 
-Each provider is independent. Without a Reactor key, GPT stories and story calls still work with illustrated previews. Without an ElevenLabs key, the storybook still works with the browser voice.
+Each provider is independent. Without a Reactor key, GPT stories and story calls still work with illustrated previews. In live mode, a voice failure offers a retry instead of silently substituting a browser voice. Browser voice is available only in explicit sample mode.
 
 Optional configuration:
 
@@ -41,6 +53,7 @@ Optional configuration:
 | `OPENAI_STORY_MODEL`      | `gpt-4.1-mini`               | Structured story generation                                       |
 | `OPENAI_TRANSCRIBE_MODEL` | `gpt-4o-mini-transcribe`     | Voice transcription                                               |
 | `ELEVENLABS_VOICE_ID`     | Arthur                       | Fallback voice for narration that names none; the picked voice wins |
+| `OPENAI_TTS_VOICE`        | per narrator                 | Forces one OpenAI voice instead of each narrator's counterpart      |
 | `ELEVENLABS_MODEL`        | `eleven_flash_v2_5`          | Narration model                                                   |
 | `ELEVENLABS_AGENT_ID`     | provisioned on first call    | Pin an existing storyteller agent instead of creating one         |
 | `ELEVENLABS_LLM`          | `gemini-2.5-flash`           | Model driving the live storyteller                                |
@@ -48,7 +61,7 @@ Optional configuration:
 | `PORT`                    | `3000`                       | Local server port                                                 |
 | `APP_ACCESS_CODE`         | unset                        | Shared code required by API endpoints; enter in Grown-up settings |
 
-Open **Grown-up settings** to allow live processing and select age, storyteller voice, simpler language, larger text, reduced motion, and narration. Two voices are offered, Arthur and Victoria, and the chosen one reads the storybook pages and speaks on a story call, so a child hears one narrator throughout. Both are ElevenLabs default voices, because a free plan is refused any voice taken from the shared library. Default voices are due to expire on 31 December 2026, so both will need replacing with owned voices before then. Without a Reactor key, GPT stories and voice still work with illustrated previews. An API failure is shown explicitly; live requests do not silently fall back to demo output.
+Open **Grown-up settings** to allow live processing and select age, storyteller voice, simpler language, larger text, reduced motion, and narration. Two voices are offered, Arthur and Victoria, and the chosen one reads the storybook pages and speaks on a story call, so a child hears one narrator throughout. Both are ElevenLabs default voices, because a free plan is refused any voice taken from the shared library. Default voices are due to expire on 31 December 2026, so both will need replacing with owned voices before then. Each narrator also names an OpenAI voice, so the two stay recognisably different when narration falls back to that provider. Without a Reactor key, GPT stories and voice still work with illustrated previews. An API failure is shown explicitly; live requests do not silently fall back to demo output.
 
 ## How it works
 
@@ -56,7 +69,7 @@ Open **Grown-up settings** to allow live processing and select age, storyteller 
 2. `/api/transcribe` handles an in-memory audio upload and asks OpenAI for the transcript.
 3. `/api/story` validates and moderates input, asks the Responses API for a structured page, and moderates that output before returning it. Requests use `store: false`.
 4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks direct replies or matching model events, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
-5. In live mode with grown-up consent, `/api/narrate` sends only the narrated page text to ElevenLabs. Short MP3s are buffered in memory before playback; stopping, changing pages, or recording cancels narration. Demo mode and provider failures use browser speech synthesis.
+5. In live mode with grown-up consent, `/api/narrate` sends only the narrated page text to ElevenLabs, falling back to OpenAI `gpt-4o-mini-tts` with the `marin` voice if unavailable. ElevenLabs quota failures are cached for five minutes to avoid slowing each page. Short MP3s are buffered in memory before playback; stopping, changing pages, or recording cancels narration. Only demo mode uses browser speech synthesis; live failures show a narration retry.
 6. The child can ask a question, choose a direction, request a gentler scene, or ask for a cozy ending. Previous pages remain available in memory. Narration, recording, and video can be paused; a new story releases the video session.
 7. At any point, **Call the storyteller** swaps turn-taking for a live conversation. See [Story calls](#story-calls).
 
@@ -116,7 +129,7 @@ The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-st
 
 Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Some commands return an empty acknowledgment and broadcast their confirmation separately. We subscribe before sending, accept either a direct matching reply or a matching event, and require confirmation before reporting success. Regression tests cover the track contract, early/late events, empty acknowledgments, rejected commands, timeout, and cancellation.
 
-The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from ElevenLabs or the browser.
+The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from ElevenLabs or OpenAI (browser speech in demo mode).
 
 ## Railway deployment
 

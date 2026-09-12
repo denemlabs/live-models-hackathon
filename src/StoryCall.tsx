@@ -18,6 +18,7 @@ import type { Profile, StoryPage } from "../shared/story";
 import type { SceneArgs } from "../shared/storyteller";
 import Illustration from "./Illustration";
 import { useStoryteller } from "./useStoryteller";
+import { usePictureFrame } from "./usePictureFrame";
 
 type Props = {
   accessCode: string;
@@ -26,6 +27,9 @@ type Props = {
   history: StoryPage[];
   stream: MediaStream | null;
   pictureStatus: string;
+  pictureError: string;
+  onPictureReady: (stream: MediaStream) => void;
+  preparePictures: () => Promise<boolean>;
   livePictures: boolean;
   onScene: (scene: SceneArgs) => void;
   onPage: (page: StoryPage) => void;
@@ -56,6 +60,9 @@ function CallRoom({
   history,
   stream,
   pictureStatus,
+  pictureError,
+  onPictureReady,
+  preparePictures,
   livePictures,
   onScene,
   onPage,
@@ -77,6 +84,7 @@ function CallRoom({
     profile,
     topic,
     history,
+    preparePictures,
     onScene: (scene) => {
       setTheme(scene.theme);
       onScene(scene);
@@ -93,6 +101,10 @@ function CallRoom({
   useEffect(() => {
     if (video.current) video.current.srcObject = stream;
   }, [stream]);
+  usePictureFrame(video, stream, onPictureReady);
+  useEffect(() => {
+    if (pictureError && live) call.hangUp();
+  }, [pictureError, live, call.hangUp]);
   // A turn taller than the band rolls upward at a readable pace, so a long
   // line can be followed from its first word instead of snapping to its tail.
   // Keyed on the caption id alone: a turn still growing must carry on rolling
@@ -252,7 +264,9 @@ function CallRoom({
               <Phone size={22} />
             )}
             {call.connecting || call.status === "connecting"
-              ? "Ringing…"
+              ? livePictures
+                ? "Preparing pictures before the story…"
+                : "Ringing…"
               : "Start the story call"}
           </button>
           <p className="tiny-note">
@@ -288,12 +302,12 @@ function CallRoom({
                     </button>
                   </div>
                 )}
-                {page.choices.slice(0, 2).map((choice) => (
+                {page.choices.slice(0, 2).map((choice, index) => (
                   <button
                     key={choice}
                     onClick={() => call.sendUserMessage(choice)}
                   >
-                    {choice}
+                    <span className="choice-number">{index + 1}</span> {choice}
                     <ArrowRight size={14} />
                   </button>
                 ))}

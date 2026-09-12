@@ -9,14 +9,16 @@ import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
   GeneratedPageSchema,
+  choiceVisualFor,
   finalizePage,
   StoryRequestSchema,
   demoPage,
   storyInstructions,
 } from "../shared/story";
 import { CallRequestSchema } from "../shared/storyteller";
-import { VoiceSchema, voiceId } from "../shared/voices";
+import { VoiceSchema } from "../shared/voices";
 import { createStoryteller } from "./storyteller";
+import { createNarration } from "./narration";
 
 export function createApp(env: NodeJS.ProcessEnv = process.env) {
   const app = express();
@@ -28,6 +30,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
     ? new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 45000, maxRetries: 1 })
     : null;
   const storyteller = createStoryteller(env);
+  const narrate = createNarration(env, openai);
   app.use("/api", (_req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
@@ -45,6 +48,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       openai: !!openai,
       reactor: !!env.REACTOR_API_KEY,
       elevenlabs: !!env.ELEVENLABS_API_KEY,
+      narration: !!(env.ELEVENLABS_API_KEY || openai),
       storyteller: !!storyteller,
       accessCodeRequired: !!env.APP_ACCESS_CODE,
     }),
@@ -89,62 +93,31 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         .json({ error: "Choose a short story page to read aloud." });
       return;
     }
-    if (!env.ELEVENLABS_API_KEY) {
-      res
-        .status(503)
-        .json({ error: "ElevenLabs narration is not configured." });
+    if (!env.ELEVENLABS_API_KEY && !openai) {
+      res.status(503).json({ error: "AI narration is not configured." });
       return;
     }
     const controller = new AbortController();
     const disconnected = () => controller.abort();
     res.on("close", disconnected);
     try {
-      // A named voice is a deliberate choice, so it wins over the deployment
-      // default that only covers callers who did not pick one.
-      const voice = parsed.data.voice
-        ? voiceId(parsed.data.voice)
-        : env.ELEVENLABS_VOICE_ID || voiceId();
-      const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}/stream?output_format=mp3_44100_128`,
-        {
-          method: "POST",
-          headers: {
-            "xi-api-key": env.ELEVENLABS_API_KEY,
-            "Content-Type": "application/json",
-            Accept: "audio/mpeg",
-          },
-          body: JSON.stringify({
-            text: parsed.data.text,
-            model_id: env.ELEVENLABS_MODEL || "eleven_flash_v2_5",
-            voice_settings: { stability: 0.6, similarity_boost: 0.75 },
-          }),
-          signal: AbortSignal.any([
-            controller.signal,
-            AbortSignal.timeout(30000),
-          ]),
-        },
+      const { audio, provider } = await narrate(
+        parsed.data.text,
+        parsed.data.voice,
+        controller.signal,
       );
-      if (
-        !response.ok ||
-        !response.headers.get("content-type")?.startsWith("audio/")
-      )
-        throw new Error(
-          `${response.status} ${await response.text().catch(() => "")}`.slice(
-            0,
-            300,
-          ),
-        );
-      // Short pages are buffered in memory for consistent browser playback.
-      const audio = Buffer.from(await response.arrayBuffer());
-      if (!audio.length) throw new Error("Empty narration");
-      if (!controller.signal.aborted) res.type("audio/mpeg").send(audio);
+      if (!controller.signal.aborted)
+        res
+          .set("X-Narration-Provider", provider)
+          .type("audio/mpeg")
+          .send(audio);
     } catch (error) {
-      // A voice the workspace cannot reach is a setup problem the developer
-      // has to see; the child is still only told the friendly version.
+      // Losing both providers is a setup problem the developer has to see;
+      // the child is still only told the friendly version.
       if (!controller.signal.aborted) {
         console.error("Narration failed:", error);
         res.status(502).json({
-          error: "Narration couldn’t connect. You can use the browser voice.",
+          error: "Narration couldn’t connect. Please retry narration.",
         });
       }
     } finally {
@@ -198,6 +171,14 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
               previousPages: data.history,
               childSays: data.input,
               interaction: data.interaction,
+              selectedChoiceVisual:
+                data.interaction === "continue"
+                  ? choiceVisualFor(
+                      data.history.at(-1),
+                      data.choiceIndex,
+                      data.input,
+                    )
+                  : undefined,
               recentQuestions: data.conversation,
             }),
           },
@@ -209,6 +190,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
       if (
         !page ||
         ![0, 2].includes(page.choices.length) ||
+        page.choiceVisuals.length !== page.choices.length ||
         page.choices.some((choice) => !choice.trim())
       ) {
         res.status(422).json({
@@ -216,9 +198,10 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
         });
         return;
       }
+      const finalPage = finalizePage(page, data);
       const checked = await openai.moderations.create({
         model: "omni-moderation-latest",
-        input: JSON.stringify(page),
+        input: JSON.stringify(finalPage),
       });
       if (checked.results.some((r) => r.flagged)) {
         res
@@ -226,7 +209,7 @@ export function createApp(env: NodeJS.ProcessEnv = process.env) {
           .json({ error: "Let’s try a gentler turn for this story." });
         return;
       }
-      res.json({ page: finalizePage(page, data), mode: "live" });
+      res.json({ page: finalPage, mode: "live" });
     } catch {
       res.status(502).json({
         error:

@@ -2,11 +2,20 @@ import { config } from "dotenv";
 import express from "express";
 import { resolve } from "node:path";
 import { createApp } from "./app";
+import { developmentApi } from "./devProxy";
 // dotenv never overwrites what is already set, so the first file listed wins.
 config({ path: [".env.local", ".env"], quiet: true });
-const app = createApp();
+const api = createApp();
+const app = express();
+const proxyOrigin =
+  process.env.NODE_ENV !== "production"
+    ? process.env.DEV_API_ORIGIN
+    : undefined;
+if (proxyOrigin) app.use("/api", developmentApi(proxyOrigin));
+app.use(api);
 const cleanup = setInterval(() => {
-  void app.locals.videoSessions
+  if (proxyOrigin) return;
+  void api.locals.videoSessions
     .reap()
     .catch(() => console.warn("Video session cleanup will retry"));
 }, 30000);
