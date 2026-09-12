@@ -73,7 +73,9 @@ The agent drives the rest of the app through two client tools, declared in `shar
 
 Both tools are non-blocking, so neither one stalls the storyteller mid-sentence. Pages written during a call stay in the storybook afterwards, and a later call picks the same story back up.
 
-`/api/storyteller/token` mints a conversation token per call. On first use the server looks for an agent named `Little Wonder storyteller v1`, creates one with its client tools if none exists, and logs the id so it can be pinned with `ELEVENLABS_AGENT_ID`. The system prompt is composed server-side for each call from the age range, accessibility preferences, and the story so far, then applied as a session override; the safety rules are never sent from the browser. Setting `ELEVENLABS_AGENT_ID` hands configuration to whoever owns that agent, and the server stops sending overrides.
+`/api/storyteller/token` mints a conversation token per call. On first use the server looks for an agent named `Little Wonder storyteller v1`, creates one with its client tools if none exists, and logs the id so it can be pinned with `ELEVENLABS_AGENT_ID`. The system prompt is composed server-side for each call from the age range, accessibility preferences, and the story so far, then applied as a session override; the safety rules are never sent from the browser.
+
+Whether that override is sent depends on the agent, not on how it was configured here. The server reads the agent's security settings once and sends the per-call prompt only if the agent enables `agent.prompt.prompt`. Agents it provisions enable it, so pinning one keeps the storyteller intact; a hand-built agent that leaves overrides off keeps its own dashboard prompt instead.
 
 Turn detection is set to `patient` with a 12-second timeout, because children think mid-sentence. Calls are capped at 15 minutes.
 

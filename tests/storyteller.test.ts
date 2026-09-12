@@ -39,8 +39,12 @@ const post = (url: string, data: unknown) =>
 
 type Recorded = { url: string; method: string; body: any; key?: string };
 
-// Stands in for the ElevenLabs workspace: an empty one unless seeded with an agent.
-function mockElevenLabs(options: { existingAgent?: string } = {}) {
+// Stands in for the ElevenLabs workspace: an empty one unless seeded with an
+// agent. `pinnedAllowsOverrides` models whether a pinned agent's owner enabled
+// the prompt override field.
+function mockElevenLabs(
+  options: { existingAgent?: string; pinnedAllowsOverrides?: boolean } = {},
+) {
   const original = globalThis.fetch;
   const log = console.log;
   const calls: Recorded[] = [];
@@ -68,6 +72,16 @@ function mockElevenLabs(options: { existingAgent?: string } = {}) {
     if (url.includes("/convai/tools?")) return json({ tools: [] });
     if (url.endsWith("/convai/tools")) return json({ id: "tool_test" });
     if (url.includes("/convai/agents?")) return json({ agents });
+    if (/\/convai\/agents\/[^/?]+$/.test(url))
+      return json({
+        platform_settings: {
+          overrides: {
+            conversation_config_override: {
+              agent: { prompt: { prompt: !!options.pinnedAllowsOverrides } },
+            },
+          },
+        },
+      });
     if (url.endsWith("/convai/agents/create")) {
       agents = [
         { agent_id: "agent_new", name: "Little Wonder storyteller v1" },
@@ -143,27 +157,50 @@ test("an existing agent is reused instead of creating a second one", async () =>
   }
 });
 
-test("a pinned agent skips provisioning and is never overridden by the browser", async () => {
-  const eleven = mockElevenLabs();
+test("a pinned agent skips provisioning", async () => {
+  const eleven = mockElevenLabs({ pinnedAllowsOverrides: true });
   try {
     await withServer(
       { ELEVENLABS_API_KEY: KEY, ELEVENLABS_AGENT_ID: "agent_pinned" },
       async (base) => {
-        const response = await post(`${base}/api/storyteller/token`, {
-          profile,
-        });
-        const data = await response.json();
-        assert.equal(response.status, 200);
-        assert.equal(data.overrides, null);
+        assert.equal(
+          (await post(`${base}/api/storyteller/token`, { profile })).status,
+          200,
+        );
       },
     );
-    assert.deepEqual(
-      eleven.calls.map((c) => c.method),
-      ["GET"],
-      "only the token request should reach ElevenLabs",
+    assert.ok(
+      eleven.calls.every((c) => c.method === "GET"),
+      "a pinned agent must not create tools or agents",
     );
   } finally {
     eleven.restore();
+  }
+});
+
+// Pinning the agent we provisioned is the documented happy path, so it has to
+// keep receiving the per-call prompt that carries the safety rules.
+test("the per-call prompt follows what the pinned agent actually allows", async () => {
+  for (const allowed of [true, false]) {
+    const eleven = mockElevenLabs({ pinnedAllowsOverrides: allowed });
+    try {
+      await withServer(
+        { ELEVENLABS_API_KEY: KEY, ELEVENLABS_AGENT_ID: "agent_pinned" },
+        async (base) => {
+          const { overrides } = await (
+            await post(`${base}/api/storyteller/token`, { profile })
+          ).json();
+          if (allowed)
+            assert.match(
+              overrides.agent.prompt.prompt,
+              /KEEPING THIS CHILD SAFE/,
+            );
+          else assert.equal(overrides, null);
+        },
+      );
+    } finally {
+      eleven.restore();
+    }
   }
 });
 

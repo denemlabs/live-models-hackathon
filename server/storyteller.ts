@@ -108,12 +108,32 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
     return created.agent_id;
   }
 
-  let agent: Promise<string> | null = pinned ? Promise.resolve(pinned) : null;
-  function agentId() {
+  // An agent only accepts a per-call prompt if its owner enabled that field.
+  // Ask, rather than assuming, so pinning an agent we provisioned ourselves
+  // does not silently drop the storyteller back to its placeholder prompt.
+  async function overridable(id: string) {
+    const agent = await call<{
+      platform_settings?: {
+        overrides?: {
+          conversation_config_override?: { agent?: { prompt?: unknown } };
+        };
+      };
+    }>(`/convai/agents/${encodeURIComponent(id)}`);
+    const fields =
+      agent.platform_settings?.overrides?.conversation_config_override?.agent
+        ?.prompt;
+    return (fields as { prompt?: boolean } | undefined)?.prompt === true;
+  }
+
+  let agent: Promise<{ id: string; overridable: boolean }> | null = null;
+  function resolveAgent() {
     // Cache the in-flight promise so concurrent calls never provision twice,
     // but drop it on failure so a transient error is retried.
     if (!agent)
-      agent = provision().catch((error: unknown) => {
+      agent = (async () => {
+        if (!pinned) return { id: await provision(), overridable: true };
+        return { id: pinned, overridable: await overridable(pinned) };
+      })().catch((error: unknown) => {
         agent = null;
         throw error;
       });
@@ -122,22 +142,20 @@ export function createStoryteller(env: NodeJS.ProcessEnv) {
 
   return {
     async session(request: CallRequest) {
-      const id = await agentId();
+      const { id, overridable } = await resolveAgent();
       const { token } = await call<{ token: string }>(
         `/convai/conversation/token?agent_id=${encodeURIComponent(id)}`,
       );
-      // A pinned agent belongs to whoever configured it, and its override
-      // permissions are unknown. Only steer agents we provisioned ourselves.
-      const overrides: CallOverrides | null = pinned
-        ? null
-        : {
+      const overrides: CallOverrides | null = overridable
+        ? {
             agent: {
               prompt: { prompt: storytellerInstructions(request) },
               firstMessage: storytellerGreeting(request),
               language: "en",
             },
             tts: { voiceId },
-          };
+          }
+        : null;
       return { token, overrides };
     },
   };
