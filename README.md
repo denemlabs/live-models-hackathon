@@ -2,7 +2,7 @@
 
 A living fairy-tale storybook made for the [Live Models Hackathon](https://luma.com/gh4256ju), hosted by Visko, Reactor, and Nebius. Work lives on the `simon` branch.
 
-Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. A visible opening box collects the topic. Story text and numbered choices appear over live Orbis video, and ElevenLabs reads the same story, question and options. The welcome forest animation is hidden once a story starts so it cannot be mistaken for generated video.
+Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. A visible opening box collects the topic. Story text and numbered choices appear over live Orbis video, and natural AI narration reads the same story, question and options. The welcome forest animation is hidden once a story starts so it cannot be mistaken for generated video.
 
 There are two ways to hear a story. The **storybook** is turn-by-turn: say or type an idea, read the page, choose what happens next. A **story call** is live: an ElevenLabs storyteller joins over WebRTC and tells the story out loud in real time, listening while it speaks, and filling in the storybook pages as it goes.
 
@@ -68,7 +68,7 @@ Open **Grown-up settings** to allow live processing and select age, simpler lang
 2. `/api/transcribe` handles an in-memory audio upload and asks OpenAI for the transcript.
 3. `/api/story` validates and moderates input, asks the Responses API for a structured page, and moderates that output before returning it. Requests use `store: false`.
 4. The browser renders the page and uses the Reactor SDK to connect to Orbis over WebRTC. It sends `set_prompt`, checks direct replies or matching model events, waits for `conditions_ready`, and only then sends `start` for the first scene. Later turns change `set_prompt` within the same stream. Prompts re-establish the characters and setting.
-5. In live mode with grown-up consent, `/api/narrate` sends only the narrated page text to ElevenLabs. Short MP3s are buffered in memory before playback; stopping, changing pages, or recording cancels narration. Demo mode and provider failures use browser speech synthesis.
+5. In live mode with grown-up consent, `/api/narrate` sends only the narrated page text to ElevenLabs, falling back to OpenAI `gpt-4o-mini-tts` with the `marin` voice if unavailable. ElevenLabs quota failures are cached for five minutes to avoid slowing each page. Short MP3s are buffered in memory before playback; stopping, changing pages, or recording cancels narration. Only demo mode uses browser speech synthesis; live failures show a narration retry.
 6. The child can ask a question, choose a direction, request a gentler scene, or ask for a cozy ending. Previous pages remain available in memory. Narration, recording, and video can be paused; a new story releases the video session.
 7. At any point, **Call the storyteller** swaps turn-taking for a live conversation. See [Story calls](#story-calls).
 
@@ -128,7 +128,7 @@ The [organizers’ starter](https://github.com/Visko-Platform/orbis-hackathon-st
 
 Our integration handles command acknowledgments, nested model event payloads, the `conditions_ready` startup gate, and completed/reset runs. Readiness listeners are installed before the prompt is sent, and cancelled when a story is stopped. Some commands return an empty acknowledgment and broadcast their confirmation separately. We subscribe before sending, accept either a direct matching reply or a matching event, and require confirmation before reporting success. Regression tests cover the track contract, early/late events, empty acknowledgments, rejected commands, timeout, and cancellation.
 
-The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from ElevenLabs or the browser.
+The starter’s optional Gemini/Nano Banana image kickoff is not required for our GPT-driven, text-to-video flow. Our application uses OpenAI and Reactor keys; a Gemini key is not needed. Audio generation is disabled in Orbis because narration comes from ElevenLabs or OpenAI (browser speech in demo mode).
 
 ## Railway deployment
 

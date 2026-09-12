@@ -64,6 +64,7 @@ type Config = {
   openai: boolean;
   reactor: boolean;
   elevenlabs: boolean;
+  narration?: boolean;
   storyteller: boolean;
   accessCodeRequired: boolean;
 };
@@ -130,7 +131,10 @@ export default function App({
     ["preparing", "transcribing", "adapting"].includes(previewStage);
   const locked = busy || paused || simulating;
   const { speaking, completion, read, mute } = useNarration({
-    elevenlabs: !!config?.elevenlabs && consent && !demo,
+    cloudVoice:
+      !!(config?.narration || config?.elevenlabs || config?.openai) &&
+      consent &&
+      !demo,
     enabled: profile.readAloud,
     accessCode,
     youngReader: profile.age === "3–5",
@@ -1236,17 +1240,17 @@ export default function App({
                 pages fill in as they talk.
               </p>
               <p>
-                Live read aloud uses an AI voice from ElevenLabs when
-                configured, with browser narration as a fallback. The welcome
-                background stays visible until live video has played its first
-                frame. Demo mode uses curated stories instead of AI generation.
+                Live read aloud uses an AI voice from ElevenLabs, with OpenAI
+                narration when ElevenLabs is unavailable. The welcome background
+                stays visible until live video has played its first frame. Demo
+                mode uses curated stories instead of AI generation.
               </p>
               <p>
                 Voice clips are sent to OpenAI for transcription; story text and
                 preferences are sent for generation. Only scene descriptions go
-                to Reactor. Narrated story pages go to ElevenLabs. This app
-                keeps no recordings or saved profiles. Providers’ own data
-                policies still apply.
+                to Reactor. Narrated story pages go to ElevenLabs or OpenAI.
+                This app keeps no recordings or saved profiles. Providers’ own
+                data policies still apply.
               </p>
             </>
           ) : (
@@ -1301,9 +1305,12 @@ export default function App({
                     {
                       key: "readAloud",
                       label: "Read the story aloud",
-                      detail: config?.elevenlabs
-                        ? "ElevenLabs AI voice in live mode; browser voice in demo mode."
-                        : "Synthetic narration from your browser.",
+                      detail:
+                        config?.narration ||
+                        config?.openai ||
+                        config?.elevenlabs
+                          ? "Natural AI narration from ElevenLabs or OpenAI."
+                          : "Synthetic narration from your browser.",
                     },
                   ] as const
                 ).map((option) => (
@@ -1346,11 +1353,21 @@ export default function App({
                 </div>
                 <div>
                   <span>
-                    <i className={config?.elevenlabs ? "connected" : ""} />{" "}
-                    ElevenLabs narration
+                    <i
+                      className={
+                        config?.narration ||
+                        config?.openai ||
+                        config?.elevenlabs
+                          ? "connected"
+                          : ""
+                      }
+                    />{" "}
+                    AI story narration
                   </span>
                   <small>
-                    {config?.elevenlabs ? "Key configured" : "Browser voice"}
+                    {config?.narration || config?.openai || config?.elevenlabs
+                      ? "Ready"
+                      : "Demo voice"}
                   </small>
                 </div>
                 <div>
@@ -1394,8 +1411,8 @@ export default function App({
                 <span>
                   I’m a grown-up supervising this session. I allow sending voice
                   clips and story text to OpenAI, scene descriptions to Reactor,
-                  and narrated story pages to ElevenLabs when enabled, plus live
-                  call audio to ElevenLabs during a story call.
+                  and narrated story pages to ElevenLabs or OpenAI when enabled,
+                  plus live call audio to ElevenLabs during a story call.
                 </span>
               </label>
               <p className="privacy-note">

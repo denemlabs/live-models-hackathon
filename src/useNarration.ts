@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { playWhenReady } from "./pictureGate";
 
 type Options = {
-  elevenlabs: boolean;
+  cloudVoice: boolean;
   enabled: boolean;
   accessCode: string;
   youngReader: boolean;
@@ -45,7 +45,7 @@ export function useNarration(options: Options) {
 
   useEffect(() => {
     mute();
-  }, [options.enabled, options.elevenlabs, mute]);
+  }, [options.enabled, options.cloudVoice, mute]);
   useEffect(
     () => () => {
       generation.current++;
@@ -103,7 +103,7 @@ export function useNarration(options: Options) {
       if (!(await picture)) finish();
     };
     setSpeaking(true); // Stop also cancels audio that is still being prepared.
-    if (!latest.current.elevenlabs) {
+    if (!latest.current.cloudVoice) {
       browserVoice();
       return;
     }
@@ -121,7 +121,7 @@ export function useNarration(options: Options) {
         body: JSON.stringify({ text }),
         signal: AbortSignal.any([
           controller.signal,
-          AbortSignal.timeout(35000),
+          AbortSignal.timeout(60000),
         ]),
       });
       if (!response.ok) throw new Error("Voice unavailable");
