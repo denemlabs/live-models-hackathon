@@ -22,3 +22,6 @@ __pycache__/
 .DS_Store
 *.log
 .idea/
+
+# Generated Reactor browser runtime
+public/reactor-runtime/
