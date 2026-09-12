@@ -2,7 +2,7 @@
 
 A living fairy-tale storybook made for the [Live Models Hackathon](https://luma.com/gh4256ju), hosted by Visko, Reactor, and Nebius. Work lives on the `simon` branch.
 
-Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. The opening book animation bridges the wait for the first page; a local illustration remains visible while live video starts.
+Children start with one spoken or typed idea, then shape the next page with questions, choices, and explicitly expressed feelings. GPT writes the story and directs Orbis through scene prompts. A visible opening box collects the topic. Story text and numbered choices appear over live Orbis video, and ElevenLabs reads the same story, question and options. The welcome forest animation is hidden once a story starts so it cannot be mistaken for generated video.
 
 There are two ways to hear a story. The **storybook** is turn-by-turn: say or type an idea, read the page, choose what happens next. A **story call** is live: an ElevenLabs storyteller joins over WebRTC and tells the story out loud in real time, listening while it speaks, and filling in the storybook pages as it goes.
 
@@ -18,6 +18,18 @@ npm run dev
 
 Open [localhost:3000](http://localhost:3000). The app works immediately in **illustrated demo mode**, using three curated adventures (forest, ocean, space). Demo mode does not generate original stories or live video. Narration uses the browser's synthetic voice.
 
+## Local preview with the deployed APIs
+
+To use the real voices and video locally without copying secrets, run:
+
+```sh
+PORT=3004 DEV_API_ORIGIN=https://live-models-hackathon-production.up.railway.app npm run dev
+```
+
+Refresh localhost after changing the server configuration. API requests use Railway's existing provider connections and video session registry. This proxy is disabled in production.
+
+On a story page, click either numbered option or tap **Answer out loud** and say its number or wording. Recording submits after a pause. **Hands-free answers** optionally starts listening after narration ends; clicking an option cancels any in-progress recording. The microphone is never used by the design preview.
+
 ## Connect the providers
 
 Put these values in the ignored `.env.local` file, then restart the server and refresh the page. `.env.local` is read first and `.env` second, so a value set in `.env.local` wins.
@@ -28,11 +40,11 @@ REACTOR_API_KEY=your-reactor-key
 ELEVENLABS_API_KEY=your-elevenlabs-key
 ```
 
-Do not commit keys, put them in client code, or prefix them with `VITE_`. The server exchanges the Reactor key for a 10-minute, model-scoped token limited to one session, and the ElevenLabs key for a single conversation token. The browser receives only those short-lived tokens.
+Do not commit keys, put them in client code, or prefix them with `VITE_`. The server owns each Reactor session and its cleanup token, and exchanges the ElevenLabs key for a single conversation token. The browser receives only those short-lived tokens.
 
 The Reactor key must have access to `reactor/visko-orbis-stable`. An Orbis/Visko credential that cannot mint tokens at Reactor is not interchangeable with a Reactor API key. The ElevenLabs key does two jobs: narration needs only text-to-speech, but story calls need the Agents platform, so a text-to-speech-only key narrates pages without being able to place a call.
 
-Each provider is independent. Without a Reactor key, GPT stories and story calls still work with illustrated previews. Without an ElevenLabs key, the storybook still works with the browser voice.
+Each provider is independent. Without a Reactor key, GPT stories and story calls still work with illustrated previews. In live mode, a voice failure offers a retry instead of silently substituting a browser voice. Browser voice is available only in explicit sample mode.
 
 Optional configuration:
 

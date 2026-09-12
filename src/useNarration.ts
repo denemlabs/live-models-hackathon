@@ -8,12 +8,14 @@ type Options = {
   youngReader: boolean;
   onError: (message: string) => void;
   waitForPicture: () => Promise<boolean>;
+  allowBrowserVoice: boolean;
 };
 
 export function useNarration(options: Options) {
   const latest = useRef(options);
   latest.current = options;
   const [speaking, setSpeaking] = useState(false);
+  const [completion, setCompletion] = useState(0);
   const generation = useRef(0);
   const request = useRef<AbortController | null>(null);
   const audio = useRef<HTMLAudioElement | null>(null);
@@ -61,9 +63,21 @@ export function useNarration(options: Options) {
       if (current !== generation.current) return;
       mute();
     };
+    const completed = () => {
+      if (current !== generation.current) return;
+      finish();
+      setCompletion((value) => value + 1);
+    };
     let fallbackStarted = false;
     const browserVoice = async () => {
       if (current !== generation.current || fallbackStarted) return;
+      if (!latest.current.allowBrowserVoice) {
+        latest.current.onError(
+          "The storyteller’s voice couldn’t connect. Please retry narration.",
+        );
+        finish();
+        return;
+      }
       fallbackStarted = true;
       release();
       await playWhenReady(
@@ -81,7 +95,7 @@ export function useNarration(options: Options) {
           utterance.lang = "en-US";
           utterance.rate = latest.current.youngReader ? 0.8 : 0.9;
           utterance.pitch = 1.05;
-          utterance.onend = finish;
+          utterance.onend = completed;
           utterance.onerror = finish;
           window.speechSynthesis.speak(utterance);
         },
@@ -116,11 +130,11 @@ export function useNarration(options: Options) {
       objectUrl.current = URL.createObjectURL(blob);
       const player = new Audio(objectUrl.current);
       audio.current = player;
-      player.onended = finish;
+      player.onended = completed;
       player.onerror = () => {
         if (current !== generation.current) return;
         latest.current.onError(
-          "ElevenLabs audio couldn’t play. Using the browser voice.",
+          "The narration couldn’t play. Please retry narration.",
         );
         browserVoice();
       };
@@ -133,10 +147,10 @@ export function useNarration(options: Options) {
     } catch {
       if (current !== generation.current) return;
       latest.current.onError(
-        "ElevenLabs narration is unavailable. Using the browser voice.",
+        "The storyteller’s voice is unavailable. Please retry narration.",
       );
       browserVoice();
     }
   }
-  return { speaking, read, mute };
+  return { speaking, completion, read, mute };
 }

@@ -637,6 +637,113 @@ body {
   margin-top: 4px;
   flex-wrap: wrap;
 }
+.video-stage.is-story-waiting {
+  background: radial-gradient(ellipse at 50% 30%, #395a4b, #112b22 75%);
+}
+.video-stage.is-story-waiting .stage-poster,
+.video-stage.is-story-waiting .stage-layer:not(.live-layer) {
+  opacity: 0 !important;
+}
+.story-topic-card {
+  width: min(540px, 100%);
+  padding: 26px;
+  border-radius: 28px;
+  background: #112d25df;
+  margin-bottom: 12px;
+}
+.story-topic-card h1 {
+  font-size: clamp(28px, 4vw, 42px);
+}
+.story-topic-card form {
+  display: grid;
+  gap: 12px;
+}
+.story-topic-card input {
+  width: 100%;
+  padding: 15px;
+  border-radius: 14px;
+  border: 1px solid #f6ecc17a;
+  color: #183b2d;
+  background: #fff9e9;
+  font-size: 17px;
+}
+.story-topic-card .start-story {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  background: #f3df9d;
+  color: #163828;
+  padding: 13px 20px;
+  border-radius: 14px;
+}
+.topic-mic {
+  background: transparent;
+  color: #fff6da;
+  border: 1px solid #fff6da70;
+  border-radius: 14px;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+  padding: 8px;
+}
+.sample-mode-note {
+  font-size: 12px !important;
+  margin-bottom: 0;
+}
+.story-page-text {
+  padding: 18px 22px;
+  border-radius: 20px;
+  background: #10261ee0;
+  width: min(680px, 100%);
+  max-height: 34vh;
+  overflow: auto;
+  margin-bottom: 12px;
+  flex-shrink: 1;
+  min-height: 90px;
+}
+.narrated-page {
+  margin: 0 0 8px;
+  color: #fff9e9;
+  font-size: clamp(17px, 2vw, 22px);
+  line-height: 1.55;
+  text-align: left;
+}
+.choice-number {
+  border-radius: 50%;
+  background: #f3df9d;
+  color: #163828;
+  min-width: 25px;
+  height: 25px;
+  display: inline-grid;
+  place-items: center;
+}
+.is-reading .hands-free {
+  background: transparent;
+  color: #fff6da;
+  border: 1px solid #fff6da55;
+  border-radius: 20px;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  font-size: 12px;
+  padding: 7px;
+}
+.is-reading .immersive-composer > .floating-reactions + .floating-reactions {
+  grid-row: 4;
+}
+@media (max-width: 600px) {
+  .story-topic-card {
+    padding: 20px;
+  }
+  .story-page-text {
+    padding: 14px;
+    max-height: 30vh;
+  }
+  .story-dock {
+    max-height: calc(100% - 145px);
+  }
+}
 .immersive-choices {
   display: flex;
   flex-wrap: wrap;
@@ -661,7 +768,17 @@ body {
   max-width: 100%;
 }
 .is-reading .immersive-composer > .floating-reactions + .floating-reactions {
-  grid-row: 3;
+  grid-row: 4;
+}
+.story-page-text .read-full {
+  background: transparent;
+  color: #fff6da;
+  border: 1px solid #fff6da55;
+  border-radius: 18px;
+  padding: 7px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
 }
 .floating-reactions button {
   min-height: 40px;

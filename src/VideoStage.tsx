@@ -25,6 +25,7 @@ type Props = {
   paused: boolean;
   reducedMotion: boolean;
   onLiveChange: (ready: boolean) => void;
+  storyActive?: boolean;
   media?: typeof welcomeMedia;
   attemptPlay?: (video: HTMLVideoElement) => Promise<void>;
 };
@@ -35,6 +36,7 @@ export default function VideoStage({
   paused,
   reducedMotion,
   onLiveChange,
+  storyActive = false,
   media = welcomeMedia,
   attemptPlay = nativePlay,
 }: Props) {
@@ -100,13 +102,13 @@ export default function VideoStage({
         if (active) setBlocked(true);
       });
     };
-    play(intro.current, !opened && !liveReady, () => {
+    play(intro.current, !opened && !liveReady && !storyActive, () => {
       setIntroReady(true);
       setBlocked(false);
     });
     // Keep a decoded forest underneath live playback, including early starts.
     // Disconnecting must never bring the opening book back or expose black video.
-    play(ambient.current, opened, () => {
+    play(ambient.current, opened && !storyActive, () => {
       setAmbientReady(true);
       setBlocked(false);
     });
@@ -115,14 +117,23 @@ export default function VideoStage({
       active = false;
       cancellations.forEach((cancel) => cancel());
     };
-  }, [playing, opened, liveReady, stream, mobile, playAttempt, attemptPlay]);
+  }, [
+    playing,
+    opened,
+    liveReady,
+    stream,
+    mobile,
+    playAttempt,
+    attemptPlay,
+    storyActive,
+  ]);
 
   // Keep a decoded intro frame under the ambient layer until the latter is ready.
   // Likewise the local background stays mounted under the live stream at all times.
   const variant = mobile ? "mobile" : "desktop";
   return (
     <div
-      className="video-stage"
+      className={`video-stage ${storyActive && !liveReady ? "is-story-waiting" : ""}`}
       data-phase={phase}
       data-live-ready={liveReady}
       aria-hidden={false}

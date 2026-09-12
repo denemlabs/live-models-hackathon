@@ -265,12 +265,12 @@ function CallRoom({
                     </button>
                   </div>
                 )}
-                {page.choices.slice(0, 2).map((choice) => (
+                {page.choices.slice(0, 2).map((choice, index) => (
                   <button
                     key={choice}
                     onClick={() => call.sendUserMessage(choice)}
                   >
-                    {choice}
+                    <span className="choice-number">{index + 1}</span> {choice}
                     <ArrowRight size={14} />
                   </button>
                 ))}

@@ -35,6 +35,7 @@ import {
   type Interaction,
 } from "../shared/story";
 import type { SceneArgs } from "../shared/storyteller";
+import { pageNarration, spokenChoice } from "../shared/storyInteraction";
 import VideoStage, { useMediaQuery } from "./VideoStage";
 import StoryCaption from "./StoryCaption";
 import PreviewSwitcher from "./PreviewSwitcher";
@@ -110,6 +111,8 @@ export default function App({
   const [typing, setTyping] = useState(false);
   const [fullText, setFullText] = useState(false);
   const [sound, setSound] = useState(!designPreview);
+  const [handsFree, setHandsFree] = useState(false);
+  const previousCompletion = useRef(0);
   const textDialog = useRef<HTMLDialogElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const storyInputRef = useRef<HTMLInputElement>(null);
@@ -126,12 +129,13 @@ export default function App({
     designPreview &&
     ["preparing", "transcribing", "adapting"].includes(previewStage);
   const locked = busy || paused || simulating;
-  const { speaking, read, mute } = useNarration({
+  const { speaking, completion, read, mute } = useNarration({
     elevenlabs: !!config?.elevenlabs && consent && !demo,
     enabled: profile.readAloud,
     accessCode,
     youngReader: profile.age === "3–5",
     onError: setError,
+    allowBrowserVoice: demo || designPreview,
     waitForPicture: () =>
       !demo && config?.reactor ? orbis.waitForPicture() : Promise.resolve(true),
   });
@@ -279,10 +283,7 @@ export default function App({
       setTyping(false);
       setOpening(false);
       if (profile.readAloud && sound && !isCalm)
-        void read(
-          result.page.narrative + (isAside ? "" : " " + result.page.question),
-          true,
-        );
+        void read(pageNarration(result.page), true);
       requestAnimationFrame(() => {
         if (generation === requestGeneration.current)
           bookRef.current?.focus({ preventScroll: true });
@@ -307,11 +308,61 @@ export default function App({
     accessCode,
     (text) => {
       setInput(text);
-      void tell(text);
+      respond(text);
     },
     setError,
   );
   const micBusy = mic.transcribing || mic.requesting;
+  useEffect(() => {
+    const finished = previousCompletion.current !== completion;
+    previousCompletion.current = completion;
+    if (
+      finished &&
+      handsFree &&
+      page &&
+      !aside &&
+      !paused &&
+      !busy &&
+      !inCall &&
+      !settings &&
+      !fullText &&
+      !error &&
+      !orbis.error &&
+      consent &&
+      config?.openai &&
+      !micBusy &&
+      !mic.recording &&
+      page.responseKind !== "ending"
+    ) {
+      void mic.toggle(true);
+    }
+  }, [
+    completion,
+    speaking,
+    handsFree,
+    page,
+    aside,
+    paused,
+    busy,
+    inCall,
+    settings,
+    fullText,
+    error,
+    orbis.error,
+    consent,
+    config,
+    micBusy,
+    mic.recording,
+    mic.toggle,
+  ]);
+  function respond(words: string) {
+    const index =
+      page && !aside && !questionMode
+        ? spokenChoice(words, page.choices)
+        : undefined;
+    if (index !== undefined) void tell(page.choices[index], "continue", index);
+    else void tell(words);
+  }
   function toggleMic() {
     if (designPreview) {
       if (previewStage === "listening")
@@ -332,7 +383,7 @@ export default function App({
     }
     mute();
     setError("");
-    void mic.toggle();
+    void mic.toggle(true);
   }
   useEffect(() => {
     if (
@@ -362,7 +413,7 @@ export default function App({
   function replay() {
     setSound(true);
     setReplays((value) => value + 1);
-    void read((aside || page).narrative);
+    void read(pageNarration(aside || page));
   }
   function reset() {
     requestGeneration.current++;
@@ -371,6 +422,7 @@ export default function App({
     mute();
     orbis.resetStory();
     setInCall(false);
+    setHandsFree(false);
     setAside(null);
     setQuestionMode(false);
     setConversation([]);
@@ -415,7 +467,7 @@ export default function App({
     if (!demo && config?.reactor && !paused)
       void orbis.steer(pages[index].visualPrompt);
     if (profile.readAloud && sound && !paused)
-      void read(pages[index].narrative, true);
+      void read(pageNarration(pages[index]), true);
   }
   async function togglePause() {
     const value = !paused;
@@ -433,7 +485,7 @@ export default function App({
       void orbis.steer(page.visualPrompt);
     else await orbis.pause(value);
     if (!value && page && profile.readAloud && sound)
-      void read((aside || page).narrative, true);
+      void read(pageNarration(aside || page), true);
   }
   function callStoryteller() {
     if (!config?.storyteller) {
@@ -527,7 +579,7 @@ export default function App({
     setSound(!sound);
     if (sound) mute();
     else if (page && !paused && profile.readAloud)
-      void read((aside || page).narrative);
+      void read(pageNarration(aside || page));
   };
 
   const storyActions =
@@ -594,13 +646,13 @@ export default function App({
       page.choices.slice(0, 2).map((choice, index) => (
         <button
           key={choice}
-          disabled={locked || micBusy || mic.recording}
+          disabled={locked}
           onClick={() => {
             setFullText(false);
             void tell(choice, "continue", index);
           }}
         >
-          {choice}
+          <span className="choice-number">{index + 1}</span> {choice}
         </button>
       ))
     ));
@@ -619,6 +671,7 @@ export default function App({
       className={`immersive-app ${inStory ? "is-reading" : ""} ${reducedMotion ? "reduced-motion" : ""} ${profile.largeText ? "large-text" : ""} ${typing ? "is-typing" : ""} ${designPreview ? "is-design-preview" : ""}`}
     >
       <VideoStage
+        storyActive={inStory && !designPreview}
         stream={orbis.stream}
         paused={paused}
         connecting={connecting}
@@ -764,16 +817,50 @@ export default function App({
                 )}
               </div>
             )}
-            {!page && !typing && !waitingForStory && (
-              <div className="welcome-question">
+            {!page && !waitingForStory && (
+              <div className="welcome-question story-topic-card float-surface">
                 <span className="welcome-kicker">
                   A LITTLE VOICE. A WORLD OF WONDER.
                 </span>
-                <h1>
-                  What story shall
-                  <br className="desktop-break" /> we step into?
-                </h1>
-                <p>Your imagination opens the door.</p>
+                <h1>What would you like your story to be about?</h1>
+                <p>
+                  A brave princess, a friendly dragon, or anything you imagine.
+                </p>
+                <form
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    if (canSubmit) respond(input);
+                  }}
+                >
+                  <label className="sr-only" htmlFor="topic-idea">
+                    Your story idea
+                  </label>
+                  <input
+                    id="topic-idea"
+                    value={input}
+                    maxLength={1000}
+                    onChange={(event) => setInput(event.target.value)}
+                    placeholder="I want a story about…"
+                    disabled={locked || micBusy || mic.recording}
+                  />
+                  <button className="start-story" disabled={!canSubmit}>
+                    Begin my story <ArrowRight size={18} />
+                  </button>
+                </form>
+                <button
+                  className="topic-mic"
+                  onClick={toggleMic}
+                  disabled={locked || micBusy || !config}
+                >
+                  {mic.recording ? <AudioLines size={19} /> : <Mic size={19} />}
+                  {mic.recording ? "Finish recording" : "Tell me your idea"}
+                </button>
+                {demo && (
+                  <p className="sample-mode-note">
+                    Sample mode: curated stories and browser voice. Live
+                    storytelling needs the connected APIs.
+                  </p>
+                )}
               </div>
             )}
             {page && !typing && (
@@ -791,7 +878,7 @@ export default function App({
                 </button>
                 <span>Keep the wonder. Rest a little.</span>
               </div>
-            ) : (
+            ) : page ? (
               <section
                 className="immersive-composer"
                 aria-label={page ? "Shape the story" : "Create your story"}
@@ -807,7 +894,7 @@ export default function App({
                             : "Simulate a child reaction"
                           : mic.recording
                             ? "Finish recording"
-                            : "Tell your story idea"
+                            : "Answer out loud"
                       }
                       disabled={locked || micBusy || !config}
                       onClick={toggleMic}
@@ -826,12 +913,14 @@ export default function App({
                           ? "Tap to finish the simulated reaction"
                           : "Sample reaction · no recording"
                         : mic.recording
-                          ? "Tap to finish · up to 30 seconds"
+                          ? "Listening… pause when you’re done"
                           : mic.transcribing
                             ? "Turning your voice into words…"
                             : paused
                               ? "Resume to keep imagining"
-                              : "Tap to talk"}
+                              : page.choices.length === 2
+                                ? "Say one, two, or the option"
+                                : "Tell me your idea"}
                     </span>
                     <button
                       ref={typeButtonRef}
@@ -841,6 +930,20 @@ export default function App({
                     >
                       Type instead <ArrowRight size={14} />
                     </button>
+                    {!demo && (
+                      <button
+                        className="hands-free"
+                        aria-pressed={handsFree}
+                        disabled={locked || micBusy}
+                        onClick={() => {
+                          setHandsFree(!handsFree);
+                          if (handsFree) mic.cancel();
+                          else if (!speaking && !mic.recording) toggleMic();
+                        }}
+                      >
+                        Hands-free answers {handsFree ? "on" : "off"}
+                      </button>
+                    )}
                   </>
                 ) : (
                   <>
@@ -857,7 +960,7 @@ export default function App({
                         e.preventDefault();
                         if (canSubmit) {
                           storyInputRef.current?.blur();
-                          void tell(input);
+                          respond(input);
                         }
                       }}
                     >
@@ -966,7 +1069,7 @@ export default function App({
                   </div>
                 )}
               </section>
-            )}
+            ) : null}
             {!page && !typing && !waitingForStory && (
               <p className="grown-up-note">
                 <ShieldCheck size={13} /> Best imagined together with a
@@ -980,6 +1083,8 @@ export default function App({
                   <button onClick={() => showPreview("story")}>
                     Retry preview
                   </button>
+                ) : /narration|storyteller’s voice/i.test(error) && page ? (
+                  <button onClick={replay}>Retry narration</button>
                 ) : orbis.error && !error ? (
                   <button
                     disabled={paused}

@@ -31,6 +31,19 @@ export default function StoryCaption({
     return () => clearTimeout(timer);
   }, [auto, cue, cues.length, currentCue, paused, preview]);
   if (!cues.length) return null;
+  if (!preview)
+    return (
+      <section
+        className="story-caption story-page-text"
+        aria-label="Story text"
+        hidden={hidden}
+      >
+        <p className="narrated-page">{text}</p>
+        <button className="read-full" onClick={onFullText}>
+          <BookOpen size={14} /> Read story
+        </button>
+      </section>
+    );
   return (
     <section
       className="story-caption"
