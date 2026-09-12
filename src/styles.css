@@ -1649,22 +1649,36 @@ dialog::backdrop {
   padding: 4px 9px;
 }
 /* One rolling caption band, like the closed captions on a television. The
-   storyteller is bold and the child is italic, so nobody needs a name label. */
+   storyteller is bold and the child is italic, so nobody needs a name label.
+   A turn taller than three lines rolls upward; it stays scrollable by hand so
+   the whole line can be reached without waiting. */
 .call-cc {
   width: 100%;
   margin-top: 14px;
   padding: 11px 18px;
-  max-height: calc(3em * 1.55 + 22px);
-  overflow: hidden;
+  font-size: 15px;
+  line-height: 1.55;
+  /* Three whole lines, so a fourth is never sliced through its letters. Only
+     the top padding and the border count: a scrollport includes its padding,
+     so the bottom one falls below the fold until the turn is fully rolled. */
+  max-height: calc(3 * 1.55em + 11px + 2px);
+  overflow-y: auto;
+  scrollbar-width: none;
   background: #0b1210c2;
   border: 1px solid #ffffff1a;
   border-radius: 13px;
   backdrop-filter: blur(6px);
 }
+.call-cc::-webkit-scrollbar {
+  display: none;
+}
+/* Nothing may move, so the band opens to the full turn instead of rolling. */
+.call.reduced-motion .call-cc {
+  max-height: none;
+  overflow: visible;
+}
 .call-cc p {
   margin: 0;
-  font-size: 15px;
-  line-height: 1.55;
   text-align: center;
   text-wrap: balance;
   color: #eef1e6;

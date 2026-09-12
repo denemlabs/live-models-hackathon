@@ -44,6 +44,11 @@ function clock(seconds: number) {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
+// Let the opening words be read before the caption starts moving, then roll at
+// roughly one line every second and a half.
+const CAPTION_HOLD_MS = 1200;
+const CAPTION_ROLL_PX_PER_SECOND = 15;
+
 function CallRoom({
   accessCode,
   profile,
@@ -88,12 +93,41 @@ function CallRoom({
   useEffect(() => {
     if (video.current) video.current.srcObject = stream;
   }, [stream]);
-  // A long turn overflows the caption band, so keep the newest words in view
-  // the way broadcast captions roll upward.
+  // A turn taller than the band rolls upward at a readable pace, so a long
+  // line can be followed from its first word instead of snapping to its tail.
+  // Keyed on the caption id alone: a turn still growing must carry on rolling
+  // rather than jump back to the top on every partial.
   useEffect(() => {
     const box = captionBox.current;
-    if (box) box.scrollTop = box.scrollHeight;
-  }, [caption?.id, caption?.text, showCaptions]);
+    if (!box || !showCaptions) return;
+    box.scrollTop = 0;
+    // Reduced motion opens the band to full height instead, so nothing moves.
+    if (profile.reducedMotion) return;
+    let frame = 0;
+    let previous = 0;
+    let held = 0;
+    // The offset is carried here rather than read back from scrollTop, which
+    // snaps to whole device pixels and would make the pace vary by display.
+    let offset = 0;
+    const roll = (now: number) => {
+      frame = requestAnimationFrame(roll);
+      const elapsed = previous ? now - previous : 0;
+      previous = now;
+      if (held < CAPTION_HOLD_MS) {
+        held += elapsed;
+        return;
+      }
+      const furthest = box.scrollHeight - box.clientHeight;
+      if (furthest <= 0) return;
+      offset = Math.min(
+        furthest,
+        offset + (CAPTION_ROLL_PX_PER_SECOND * elapsed) / 1000,
+      );
+      box.scrollTop = offset;
+    };
+    frame = requestAnimationFrame(roll);
+    return () => cancelAnimationFrame(frame);
+  }, [caption?.id, showCaptions, profile.reducedMotion]);
   useEffect(() => {
     if (!live) return setSeconds(0);
     const tick = setInterval(() => setSeconds((s) => s + 1), 1000);
