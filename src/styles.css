@@ -1926,8 +1926,9 @@ dialog::backdrop {
   padding: 9px 14px;
   border-radius: 16px;
   font-size: 12px;
-  max-height: 72px;
+  max-height: 100px;
   overflow: auto;
+  flex-shrink: 0;
   color: #fff9e9;
 }
 .answer-receipt span,
@@ -1937,4 +1938,17 @@ dialog::backdrop {
 .answer-receipt small {
   opacity: 0.8;
   margin-top: 4px;
+}
+
+.answer-receipt button {
+  background: transparent;
+  color: inherit;
+  border: 1px solid #fff9e944;
+  border-radius: 12px;
+  padding: 3px 9px;
+  margin-top: 5px;
+  font-size: 11px;
+}
+.answer-receipt button:disabled {
+  opacity: 0.5;
 }

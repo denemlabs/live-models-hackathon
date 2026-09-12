@@ -361,7 +361,7 @@ export function useOrbis(accessCode: string) {
         acknowledged(initialPrompt);
         // A second story page can arrive while the initial prompt is being prepared.
         // Startup can coalesce several turns, so use the latest complete scene here.
-        // Once connected, ordinary updates use only the visible transition.
+        // Every replacement retains the full scene and the current action.
         let applied = initialPrompt;
         while (currentSession() && pending.current !== applied) {
           applied = pending.current;

@@ -783,6 +783,25 @@ export default function App({
                 {!demo && !orbis.error && orbis.promptStatus && (
                   <small>{orbis.promptStatus}</small>
                 )}
+                {!demo &&
+                  config?.reactor &&
+                  !busy &&
+                  !paused &&
+                  !orbis.error && (
+                    <button
+                      disabled={!liveReady}
+                      onClick={() => {
+                        mute();
+                        mic.cancel();
+                        orbis.resetStory();
+                        void orbis.steer(page.visualPrompt, page.visualChange);
+                        if (profile.readAloud && sound)
+                          void read(pageNarration(page), true);
+                      }}
+                    >
+                      Regenerate picture
+                    </button>
+                  )}
               </div>
             )}
             {page && (
